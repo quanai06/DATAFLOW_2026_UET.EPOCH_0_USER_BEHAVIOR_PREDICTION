@@ -30,7 +30,7 @@ def get_transformer_loaders(config):
     train_loader = DataLoader(
         train_ds,
         batch_size=config["batch_size"],
-        shuffle=False
+        shuffle=True
     )
 
     val_loader = DataLoader(
