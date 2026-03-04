@@ -1,5 +1,15 @@
 import argparse
 import torch
+import os
+import numpy as np
+import pandas as pd
+import joblib
+import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import f1_score
+
+from src.training import train_combine as tc
 
 from src.training.train_transformer import train_transformer
 from src.metrics.metrics import evaluate_model
@@ -116,6 +126,168 @@ def transformer():
     print("\n===== FULL MODEL VAL METRICS =====")
     print(val_results_full)
 
+def combine_lstm_gru_cnn():
+    # 1. CONFIGURATION
+    # ======================================================
+    CFG = {
+        'SEED': 42,
+        'MAX_LEN': 37,
+        'EMBEDDING_DIM': 128,
+        'LSTM_UNITS': 256,
+        'GRU_UNITS': 256,
+        'CNN_FILTERS': 256,
+        'CNN_KERNEL_SIZE': 3,
+        'BATCH_SIZE': 128,
+        'EPOCHS': 18,
+        'N_ENSEMBLE': 12, # 4 LSTM + 4 GRU + 4 CNN
+        'TARGET_COLS': ['attr_1','attr_2','attr_3','attr_4','attr_5','attr_6'],
+        'MODEL_DIR': 'models/combine',
+        'DATA_PATH': 'data'
+    }
+    os.makedirs(CFG['MODEL_DIR'], exist_ok=True)
+    tc.seed_everything(CFG['SEED'])
+    # 2. PREPARE DATA
+    # ======================================================
+    # Load Data
+    df_train, df_val, df_test, X_full, df_y_train, df_y_val, Y_full = tc.load_data(CFG['DATA_PATH'])
+    # --- Process Sequences ---
+    print("⚙️ Processing Sequences...")
+    X_train_seq = tc.process_sequences_val(tc.get_sequences(df_train), CFG['MAX_LEN'])
+    X_val_seq   = tc.process_sequences_val(tc.get_sequences(df_val), CFG['MAX_LEN'])
+    X_test_seq  = tc.process_sequences_val(tc.get_sequences(df_test), CFG['MAX_LEN'])
+    X_full_seq  = tc.process_sequences_val(tc.get_sequences(X_full), CFG['MAX_LEN'])
+
+    VOCAB_SIZE = max(np.max(X_train_seq), np.max(X_val_seq), np.max(X_test_seq)) + 1
+    print(f"   Vocab Size: {VOCAB_SIZE}")
+
+    # --- Process Manual Stats ---
+    print("⚙️ Processing Manual Stats...")
+    X_train_stats = tc.get_stats(df_train)
+    X_val_stats   = tc.get_stats(df_val)
+    X_test_stats  = tc.get_stats(df_test)
+    X_full_stats  = tc.get_stats(X_full)
+
+    # --- Scale Stats (Phase 1: Fit on Train) ---
+    scaler_p1 = StandardScaler()
+    scaler_p1.fit(X_train_stats)
+    joblib.dump(scaler_p1, f"{CFG['MODEL_DIR']}/scaler_phase1.pkl")
+
+    X_train_stats_sc = scaler_p1.transform(X_train_stats)
+    X_val_stats_sc   = scaler_p1.transform(X_val_stats)
+    NUM_WIDE_FEATURES = X_train_stats.shape[1]
+    print(f"   Num features: {NUM_WIDE_FEATURES}")
+
+    # --- Encode Labels ---
+    print("⚙️ Encoding Labels...")
+    encoders = tc.fit_encode_labels(Y_full, CFG['TARGET_COLS'])
+    # Save encoders
+    for col, le in encoders.items():
+        joblib.dump(le, f"{CFG['MODEL_DIR']}/encoder_{col}.pkl")
+
+    y_train_list = tc.transform_labels(df_y_train, CFG['TARGET_COLS'], encoders)
+    y_val_list   = tc.transform_labels(df_y_val, CFG['TARGET_COLS'], encoders)
+    y_full_encoded_list = tc.transform_labels(Y_full, CFG['TARGET_COLS'], encoders)
+
+    # ======================================================
+    # 3. PHASE 1: CHECK F1 (VALIDATION)
+    # ======================================================
+    print("\n" + "="*40)
+    print("🔍 PHASE 1: CHECK VALIDATION F1")
+    print("="*40)
+
+    check_model = tc.build_model('lstm', CFG, VOCAB_SIZE, NUM_WIDE_FEATURES, encoders, CFG['TARGET_COLS'])
+    early_stop = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+
+    check_model.fit(
+        x=[X_train_seq, X_train_stats_sc],
+        y=y_train_list,
+        validation_data=([X_val_seq, X_val_stats_sc], y_val_list),
+        epochs=12, # Ít epoch để check nhanh
+        batch_size=CFG['BATCH_SIZE'],
+        callbacks=[early_stop],
+        verbose=1
+    )
+
+    # Eval F1
+    val_preds = check_model.predict([X_val_seq, X_val_stats_sc], verbose=0)
+    f1_scores = []
+    print("\n📊 Validation Scores:")
+    for i, col in enumerate(CFG['TARGET_COLS']):
+        p = np.argmax(val_preds[i], axis=1)
+        t = y_val_list[i]
+        score = f1_score(t, p, average='macro')
+        f1_scores.append(score)
+        print(f"   {col}: {score:.4f}")
+    print(f"🔥 Macro F1 Avg: {np.mean(f1_scores):.5f}")
+
+    # ======================================================
+    # 4. PHASE 2: FULL TRAIN & ENSEMBLE
+    # ======================================================
+    print("\n" + "="*40)
+    print("🚀 PHASE 2: FULL TRAINING & ENSEMBLE")
+    print("="*40)
+
+    # Re-fit scaler on Full Data
+    scaler_full = StandardScaler()
+    scaler_full.fit(X_full_stats)
+    joblib.dump(scaler_full, f"{CFG['MODEL_DIR']}/scaler_full.pkl")
+
+    X_full_stats_sc = scaler_full.transform(X_full_stats)
+    X_test_stats_sc = scaler_full.transform(X_test_stats)
+
+    all_models_preds = []
+
+    for i in range(CFG['N_ENSEMBLE']):
+        # Reseed per model
+        current_seed = CFG['SEED'] + i
+        tc.seed_everything(current_seed)
+        tf.keras.backend.clear_session()
+        
+        # Select Model Architecture (4 LSTM - 4 GRU - 4 CNN)
+        if i < 4: m_type = 'lstm'
+        elif i < 8: m_type = 'gru'
+        else: m_type = 'cnn'
+        
+        print(f"\n🔄 Training Model {i+1}/{CFG['N_ENSEMBLE']} [{m_type.upper()}] (Seed {current_seed})...")
+        
+        model = tc.build_model(m_type, CFG, VOCAB_SIZE, NUM_WIDE_FEATURES, encoders, CFG['TARGET_COLS'])
+        
+        model.fit(
+            x=[X_full_seq, X_full_stats_sc],
+            y=y_full_encoded_list,
+            epochs=CFG['EPOCHS'],
+            batch_size=CFG['BATCH_SIZE'],
+            verbose=0, # Silent mode
+            shuffle=True
+        )
+        
+        # Save Model
+        model_path = f"{CFG['MODEL_DIR']}/model_{i}_{m_type}.keras"
+        model.save(model_path)
+        
+        # Predict Test
+        preds = model.predict([X_test_seq, X_test_stats_sc], verbose=0)
+        all_models_preds.append(preds)
+
+    # ======================================================
+    # 5. SUBMISSION
+    # ======================================================
+    print("\n⏳ Voting & Creating Submission...")
+    submission = {'id': df_test['id']}
+
+    for i, col in enumerate(CFG['TARGET_COLS']):
+        # Average Probabilities
+        col_preds = [m[i] for m in all_models_preds]
+        avg_probs = np.mean(col_preds, axis=0)
+        pred_labels = np.argmax(avg_probs, axis=1)
+        
+        submission[col] = encoders[col].inverse_transform(pred_labels)
+
+    sub_df = pd.DataFrame(submission)
+    filename = f"submission_combine_seed{CFG['SEED']}_final.csv"
+    sub_df.to_csv(filename, index=False)
+
+    print(f"\n🏆 DONE! File saved to: {filename}")
 
 def main():
 
@@ -136,4 +308,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    combine_lstm_gru_cnn()
