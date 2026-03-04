@@ -308,5 +308,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
+    main()
     combine_lstm_gru_cnn()
