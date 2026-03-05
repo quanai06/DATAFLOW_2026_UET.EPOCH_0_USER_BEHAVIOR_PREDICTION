@@ -1,107 +1,142 @@
-import numpy as np 
-import pandas as pd 
-def featuring_data(df):
+from __future__ import annotations
+
+from collections import Counter
+from typing import Iterable, Literal
+
+import numpy as np
+import pandas as pd
+
+
+def _get_sequence_columns(df: pd.DataFrame) -> list[str]:
+    seq_cols = [col for col in df.columns if col.startswith("feature_")]
+    seq_cols.sort(key=lambda name: int(name.split("_")[1]))
+    if not seq_cols:
+        raise ValueError("Khong tim thay cot sequence dang feature_*.")  # noqa: RUF001
+    return seq_cols
+
+
+def _calculate_entropy(sequence: np.ndarray) -> float:
+    if len(sequence) == 0:
+        return 0.0
+    counts = Counter(sequence)
+    probs = np.array(list(counts.values()), dtype=float) / len(sequence)
+    return float(-np.sum(probs * np.log2(probs + 1e-9)))
+
+
+def _count_rollbacks(sequence: Iterable[float]) -> tuple[int, int, list[str], list[str]]:
+    seq = [int(x) for x in sequence if pd.notnull(x) and int(x) != 0]
+    n = len(seq)
+
+    rollback_3 = 0
+    rollback_4 = 0
+    rb3_actions: set[str] = set()
+    rb4_actions: set[str] = set()
+
+    if n < 3:
+        return 0, 0, [], []
+
+    # Rollback 3 buoc: A-B-A, yeu cau B != A.
+    for i in range(n - 2):
+        if seq[i] == seq[i + 2] and seq[i] != seq[i + 1]:
+            rollback_3 += 1
+            rb3_actions.add(str(seq[i]))
+
+    # Rollback 4 buoc: A-B-C-A, yeu cau B != A va C != A.
+    for i in range(n - 3):
+        if (
+            seq[i] == seq[i + 3]
+            and seq[i] != seq[i + 1]
+            and seq[i] != seq[i + 2]
+        ):
+            rollback_4 += 1
+            rb4_actions.add(str(seq[i]))
+
+    return rollback_3, rollback_4, sorted(rb3_actions), sorted(rb4_actions)
+
+
+def _row_to_action_sequence(row: pd.Series, seq_cols: list[str]) -> str:
+    actions = row[seq_cols].dropna().astype(int).astype(str).tolist()
+    return "-".join(actions)
+
+
+def featuring_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    seq_cols = [f"feature_{i}" for i in range(1, 38)]
-    # Length 
+    seq_cols = _get_sequence_columns(df)
+
     df["length"] = df[seq_cols].notna().sum(axis=1)
 
-    # Entropy 
-    from collections import Counter
-    def calculate_entropy(row, cols):
-        seq = row[cols].dropna().values
-        if len(seq) == 0: 
-            return 0
-        
-        counts = Counter(seq)
-        probs = np.array(list(counts.values())) / len(seq)
-        return -np.sum(probs * np.log2(probs + 1e-9))
-    
-    df["entropy"] = df.apply(lambda x: calculate_entropy(x, seq_cols), axis=1)
+    def row_entropy(row: pd.Series) -> float:
+        seq = row[seq_cols].dropna().values.astype(int)
+        return _calculate_entropy(seq)
 
-    def count_rollbacks(sequence):
-        seq = [x for x in sequence if pd.notnull(x) and x != 0]
-        n = len(seq)
-        
-        rollback_3 = 0
-        rollback_4 = 0
-        rb3_actions=set()
-        rb4_actions=set()
-        
-        if n < 3:
-            return 0, 0
-        
-        # 1. Quét rollback 3 bước: A -> B -> A
-        for i in range(n - 2):
-            # Bước đầu và bước cuối của cụm 3 giống nhau, nhưng bước giữa phải khác
-            if seq[i] == seq[i+2]:
-                rollback_3 += 1
-                rb3_actions.add(str(int(seq[i])))
-                
-        # 2. Quét rollback 4 bước: A -> B -> C -> A
-        if n >= 4:
-            for i in range(n - 3):
-                # Bước đầu và bước cuối của cụm 4 giống nhau
-                if seq[i] == seq[i+3]:
-                    # Đảm bảo đây không phải là một chuỗi lặp đơn điệu (như A -> A -> A -> A)
-                    if seq[i] != seq[i+1] :
-                        rollback_4 += 1
-                        rb4_actions.add(str(int(seq[i])))
-                        
-        return rollback_3, rollback_4,list(rb3_actions),list(rb4_actions)
+    df["entropy"] = df.apply(row_entropy, axis=1)
 
-    # Ví dụ áp dụng cho DataFrame
-        
-    # Tính toán rollback cho từng dòng
-    results = df[seq_cols].apply(lambda row: count_rollbacks(row.values), axis=1)
+    rollback_results = df[seq_cols].apply(
+        lambda row: _count_rollbacks(row.values),
+        axis=1,
+    )
+    rollback_df = pd.DataFrame(rollback_results.tolist(), index=df.index)
 
-# Bước 2: Bung kết quả ra thành các cột (Cách này nhanh và sạch nhất)
-    res_df = pd.DataFrame(results.tolist(), index=df.index)
-    df['rb_3_steps'] = res_df[0]
-    df['rb_4_steps'] = res_df[1]
-
-    # Bước 3: Gộp chi tiết mã lỗi và loại bỏ trùng lặp bằng set
-    df['first_action_rb'] = [list(set(a + b)) for a, b in zip(res_df[2], res_df[3])]
-    def row_to_string(row):
-        actions = row[seq_cols].dropna().astype(int).astype(str).tolist()
-        return "-".join(actions)
-    # 'action_sequence'
-    df['action_sequence'] = df.apply(row_to_string, axis=1)
-    return df 
+    df["rb_3_steps"] = rollback_df[0]
+    df["rb_4_steps"] = rollback_df[1]
+    df["first_action_rb"] = [
+        sorted(set(a + b)) for a, b in zip(rollback_df[2], rollback_df[3])
+    ]
+    df["action_sequence"] = df.apply(
+        lambda row: _row_to_action_sequence(row, seq_cols),
+        axis=1,
+    )
+    return df
 
 
-def generate_edge_case_report(df):
+def generate_edge_case_report(
+    df: pd.DataFrame,
+    mode: Literal["or", "and"] = "or",
+    min_rb3: int = 2,
+    min_rb4: int = 1,
+) -> pd.DataFrame:
     """
-    df: DataFrame đã có các cột rb_3_steps, rb_4_steps, length, entropy, action_sequence
+    mode='or': chon case co rollback_3 >= min_rb3 HOAC rollback_4 >= min_rb4.
+    mode='and': chon case co rollback_3 >= min_rb3 VA rollback_4 >= min_rb4.
     """
-    # 1. Lọc các ID theo điều kiện bất thường nghiêm trọng
-    # rb_3_steps >= 2 VÀ rb_4_steps >= 1
-    edge_cases = df[
-        (df['rb_3_steps'] >= 2) |
-        (df['rb_4_steps'] >= 1)
-    ].copy()
-    
-    # Hàm con để tạo fact cho từng dòng (tối ưu từ hàm bạn đã viết)
-    def create_fact(row):
-        rb3 = row['rb_3_steps']
-        rb4 = row['rb_4_steps']
-        length = row['length']
-        ent = round(row['entropy'], 2)
-        
-        fact = f"Phát hiện {rb3} lần lặp 3 bước (A-B-A), "
-        fact += f"{rb4} lần lặp 4 bước (A-B-C-A). "
-        fact += f"Độ dài chuỗi: {length} thao tác. "
-        fact += f"Chỉ số hỗn loạn (Entropy): {ent}."
+    if mode not in {"or", "and"}:
+        raise ValueError("mode phai la 'or' hoac 'and'.")
 
-        return fact
+    cond_rb3 = df["rb_3_steps"] >= min_rb3
+    cond_rb4 = df["rb_4_steps"] >= min_rb4
+    mask = (cond_rb3 | cond_rb4) if mode == "or" else (cond_rb3 & cond_rb4)
+    edge_cases = df[mask].copy()
 
-    # Xây dựng DataFrame kết quả
+    def create_fact(row: pd.Series) -> str:
+        rb3 = int(row["rb_3_steps"])
+        rb4 = int(row["rb_4_steps"])
+        length = int(row["length"])
+        entropy = round(float(row["entropy"]), 2)
+        return (
+            f"Phat hien {rb3} lan lap 3 buoc (A-B-A), "
+            f"{rb4} lan lap 4 buoc (A-B-C-A). "
+            f"Do dai chuoi: {length} thao tac. "
+            f"Chi so hon loan (Entropy): {entropy}."
+        )
+
+    def create_edge_rule(row: pd.Series) -> str:
+        hit_rb3 = int(row["rb_3_steps"]) >= min_rb3
+        hit_rb4 = int(row["rb_4_steps"]) >= min_rb4
+        if hit_rb3 and hit_rb4:
+            return f"rb3>={min_rb3}+rb4>={min_rb4}"
+        if hit_rb3:
+            return f"rb3>={min_rb3}"
+        return f"rb4>={min_rb4}"
+
     report_df = pd.DataFrame()
-    report_df['id'] = edge_cases['id']
-    report_df['action_sequence'] = edge_cases['action_sequence']
-    report_df['first_action_rb'] =edge_cases['first_action_rb']
-    
-    # Tạo cột fact chứa câu diễn giải văn bản
-    report_df['fact'] = edge_cases.apply(create_fact, axis=1)
+    report_df["id"] = edge_cases["id"]
+    report_df["action_sequence"] = edge_cases["action_sequence"]
+    report_df["first_action_rb"] = edge_cases["first_action_rb"]
+    report_df["rb_3_steps"] = edge_cases["rb_3_steps"].astype(int)
+    report_df["rb_4_steps"] = edge_cases["rb_4_steps"].astype(int)
+    report_df["length"] = edge_cases["length"].astype(int)
+    report_df["entropy"] = edge_cases["entropy"].astype(float)
+    report_df["edge_rule"] = edge_cases.apply(create_edge_rule, axis=1)
+    report_df["fact"] = edge_cases.apply(create_fact, axis=1)
 
     return report_df.reset_index(drop=True)
