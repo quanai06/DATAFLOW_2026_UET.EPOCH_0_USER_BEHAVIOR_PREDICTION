@@ -8,11 +8,12 @@ Core idea:
 
 from __future__ import annotations
 
+import pandas as pd 
 import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # Optional SLM backend (lazy import). If unavailable, use deterministic fallback.
@@ -41,6 +42,20 @@ _ROW_BY_SEQUENCE: Dict[str, RowFeature] = {}
 _GROUP_INFO_BY_SIG: Dict[str, Dict[str, str]] = {}
 _CACHE: Dict[Tuple[str, str], str] = {}
 _ENT_THRESHOLDS: Tuple[float, float] = (0.30, 0.70)  # low, high on normalized entropy
+
+_TAG_HUMAN = {
+    "ANCHOR_LOOP": "Lap quanh hanh dong truc (A-B-A)",
+    "RB4": "Rollback 4 buoc (A-B-C-A)",
+    "LONG": "Chuoi dai bat thuong",
+    "HIGH_VAR": "Do bien thien hanh vi cao",
+    "MIXED": "Mau hanh vi hon hop",
+}
+
+_PRIORITY_HUMAN = {
+    "HIGH": "Cao",
+    "MED": "Trung binh",
+    "LOW": "Thap",
+}
 
 
 def _ensure_model():
@@ -212,25 +227,111 @@ def _build_signature(
     )
 
 
-def _rule_tag_priority(row: RowFeature) -> Tuple[str, str]:
-    # 5 tags requested: ANCHOR_LOOP, RB4, LONG, HIGH_VAR, MIXED
+def _rarity_boost_from_group_size(group_size: int) -> int:
+    # group càng nhỏ càng hiếm -> boost mạnh hơn
+    if group_size <= 5:
+        return 3
+    if group_size <= 20:
+        return 2
+    if group_size <= 100:
+        return 1
+    if group_size > 500:
+        return -1  # quá phổ biến -> giảm ưu tiên
+    return 0
+
+
+def _rule_tag_priority(row: RowFeature, group_size: int = 1) -> Tuple[str, str]:
+    # ---------- 1) TAG (dominant pattern) ----------
     if row.rb4 > 0:
         tag = "RB4"
-        p = "HIGH" if row.ent_level == "HIGH" or row.rb4 >= 2 else "MED"
-        return tag, p
+    elif row.aba_count > 0:
+        tag = "ANCHOR_LOOP"
+    elif row.length >= 21:
+        tag = "LONG"
+    elif row.ent_level == "HIGH":
+        tag = "HIGH_VAR"
+    else:
+        tag = "MIXED"
 
-    if row.length >= 21 and row.aba_count == 0:
-        return "LONG", "MED"
+    # ---------- 2) Base complexity score ----------
+    score = 0
 
-    if row.aba_count >= 2 and row.b_unique <= 3:
-        # strong anchor looping, usually repetitive not immediately critical
-        p = "MED" if row.aba_count >= 3 else "LOW"
-        return "ANCHOR_LOOP", p
+    # rb4 complexity
+    if row.rb4 >= 2:
+        score += 3
+    elif row.rb4 == 1:
+        score += 1  # 1 RB4 alone not urgent
 
+    # anchor loop complexity
+    if row.aba_count >= 4:
+        score += 3
+    elif row.aba_count >= 3:
+        score += 2
+    elif row.aba_count >= 2:
+        score += 1
+
+    # branching (nhiều B khác nhau -> flow phức tạp)
+    if row.b_unique >= 5:
+        score += 2
+    elif row.b_unique >= 3:
+        score += 1
+
+    # length
+    if row.length >= 30:
+        score += 3
+    elif row.length >= 21:
+        score += 2
+    elif row.length >= 16:
+        score += 1
+
+    # variability
     if row.ent_level == "HIGH":
-        return "HIGH_VAR", "MED"
+        score += 2
+    elif row.ent_level == "MID":
+        score += 1
 
-    return "MIXED", "LOW"
+    # ---------- 3) Tag-specific sanity ----------
+    # RB4 downgrade if it's short single RB4 and nothing else
+    if tag == "RB4":
+        if row.rb4 == 1 and row.length <= 10 and row.aba_count == 0 and row.ent_level != "HIGH":
+            score = min(score, 3)  # cap -> MED at most
+
+    # ANCHOR_LOOP should not be too low if repeating + long/branchy
+    if tag == "ANCHOR_LOOP":
+        if row.aba_count >= 2 and (row.length >= 16 or row.b_unique >= 3):
+            score = max(score, 4)  # ensure at least MED
+
+    # LONG
+    if tag == "LONG":
+        if row.length >= 30 or row.ent_level == "HIGH":
+            score = max(score, 6)
+
+    # HIGH_VAR
+    if tag == "HIGH_VAR":
+        if row.length < 12 and row.rb4 == 0 and row.aba_count == 0:
+            score = min(score, 3)  # cap -> MED at most
+
+    # ---------- 4) Rarity boost (điểm bạn yêu cầu) ----------
+    # group nhỏ (hiếm) -> tăng score; group quá lớn -> giảm score
+    score += _rarity_boost_from_group_size(int(group_size))
+
+    # Nếu muốn “hiếm” tác động mạnh hơn cho RB4/MIXED (các pattern khó):
+    if tag in {"RB4", "MIXED"} and group_size <= 20:
+        score += 1
+
+    # ---------- 5) Map to priority ----------
+    if score >= 7:
+        p = "HIGH"
+    elif score >= 4:
+        p = "MED"
+    else:
+        p = "LOW"
+
+    # Hard rule: nhóm quá phổ biến và chỉ loop nhẹ -> LOW
+    if tag == "ANCHOR_LOOP" and group_size >= 500 and row.aba_count <= 2 and row.rb4 == 0:
+        p = "LOW"
+
+    return tag, p
 
 
 def _slm_group_label(signature: str, sample_row: RowFeature) -> Tuple[str, str]:
@@ -329,72 +430,132 @@ def _make_row_feature(row_id: str, sequence_action: str, fact_text: Optional[str
     )
 
 
-def prime_group_context(report_df) -> None:
+
+def _pick_anchor_from_first_action_rb(x) -> str:
     """
-    Build full batch context once:
-    - dynamic entropy thresholds from current batch
-    - grouping by behavior signature
-    - group TAG/P labels and representative row
+    first_action_rb có thể là list hoặc string dạng "['105','1126']".
+    Ta chọn anchor = phần tử xuất hiện nhiều nhất (hoặc phần tử đầu nếu không đếm được).
     """
-    global _ROW_BY_SEQUENCE, _GROUP_INFO_BY_SIG, _CACHE, _ENT_THRESHOLDS
-
-    _ROW_BY_SEQUENCE = {}
-    _GROUP_INFO_BY_SIG = {}
-    _CACHE = {}
-
-    # 1) Compute dynamic entropy thresholds from full batch
-    nents: List[float] = []
-    temp_rows: List[Tuple[str, str, str]] = []  # (id, seq, fact)
-    for _, r in report_df.iterrows():
-        rid = str(r.get("id", ""))
-        seq = str(r.get("action_sequence", ""))
-        fact = str(r.get("fact", ""))
-        temp_rows.append((rid, seq, fact))
-
-        parsed = _parse_sequence(seq)
-        if parsed:
-            ent = _entropy(parsed)
-            nent = _normalized_entropy(ent, len(set(parsed)))
-            nents.append(nent)
-
-    if len(nents) >= 5:
-        low_thr = _quantile(nents, 0.30)
-        high_thr = _quantile(nents, 0.70)
-    elif nents:
-        med = _quantile(nents, 0.50)
-        low_thr = max(0.0, med - 0.10)
-        high_thr = min(1.0, med + 0.10)
+    if x is None:
+        return "-"
+    # normalize to list
+    if isinstance(x, list):
+        lst = x
+    elif isinstance(x, str):
+        s = x.strip()
+        if not s:
+            return "-"
+        try:
+            v = ast.literal_eval(s)
+            lst = v if isinstance(v, list) else [v]
+        except Exception:
+            # fallback: "105,1126" hoặc "[105,1126]"
+            s2 = s.strip("[]")
+            lst = [t.strip().strip("'").strip('"') for t in s2.split(",") if t.strip()]
     else:
-        low_thr, high_thr = 0.30, 0.70
+        lst = [x]
 
-    _ENT_THRESHOLDS = (low_thr, high_thr)
+    lst = [str(int(float(v))) for v in lst if str(v).strip() not in ("", "0", "nan", "None")]
+    if not lst:
+        return "-"
+    # choose most common
+    c = Counter(lst)
+    return c.most_common(1)[0][0]
 
-    # 2) Build row features and group map
-    sig_to_rows: Dict[str, List[RowFeature]] = defaultdict(list)
-    for rid, seq, fact in temp_rows:
-        rf = _make_row_feature(rid, seq, fact)
-        _ROW_BY_SEQUENCE[rf.sequence_action] = rf
-        sig_to_rows[rf.signature].append(rf)
 
-    # 3) Assign stable group ids by descending group size
-    sorted_sigs = sorted(sig_to_rows.keys(), key=lambda s: (-len(sig_to_rows[s]), s))
-    for idx, sig in enumerate(sorted_sigs, start=1):
-        members = sig_to_rows[sig]
-        rep = members[0]
-        count = len(members)
-        gid = f"G{idx:03d}"
+def prime_group_context(df: pd.DataFrame):
+    """
+    Group-first:
+    - Build RowFeature for each row using precomputed columns from translator.
+    - Build signature consistently and group rows.
+    - Fill _ROW_BY_SEQUENCE and _GROUP_INFO_BY_SIG so get_slm_analysis() works.
+    """
+    _ROW_BY_SEQUENCE.clear()
+    _GROUP_INFO_BY_SIG.clear()
+    _CACHE.clear()
 
-        tag, p = _slm_group_label(sig, rep)
+    # 1) build RowFeature per row
+    sig_to_rows = defaultdict(list)
+
+    low_thr, high_thr = _ENT_THRESHOLDS  # normalized entropy thresholds
+
+    for _, row in df.iterrows():
+        seq = str(row.get("action_sequence", ""))
+
+        anchor = _pick_anchor_from_first_action_rb(row.get("first_action_rb", None))
+        aba_count = int(row.get("rb_3_steps", 0))
+        rb4 = int(row.get("rb_4_steps", 0))
+        length = int(row.get("length", 0))
+        entropy = float(row.get("entropy", 0.0))
+
+        # nent & ent_level (không cần parse lại seq)
+        # unique_count không có sẵn -> ước lượng an toàn:
+        # nếu bạn có cột unique_count thì dùng, còn không thì dùng min(length, 20) làm proxy
+        unique_proxy = max(1, min(length, 20))
+        nent = _normalized_entropy(entropy, unique_proxy)
+        ent_level = _ent_level(nent, low_thr, high_thr)
+
+        # b_unique: nếu bạn KHÔNG muốn parse seq thì để 0.
+        # Nếu muốn có b_unique tốt hơn, parse nhanh từ sequence quanh anchor:
+        b_unique = 0
+        if anchor != "-" and seq:
+            seq_int = _parse_sequence(seq)
+            aba, bunq = _anchor_aba_stats(seq_int, anchor)
+            # aba_count từ translator và aba tính lại có thể lệch nhẹ, ưu tiên translator cho tốc độ
+            b_unique = bunq
+
+        signature = _build_signature(
+            anchor=anchor,
+            aba_count=aba_count,
+            b_unique=b_unique,
+            rb4=rb4,
+            length=length,
+            ent_level=ent_level,
+        )
+
+        feat = RowFeature(
+            row_id=str(row.get("id", "NA")),
+            sequence_action=seq,
+            anchor=anchor,
+            aba_count=aba_count,
+            b_unique=b_unique,
+            rb4=rb4,
+            length=length,
+            entropy=entropy,
+            nent=nent,
+            ent_level=ent_level,
+            signature=signature,
+        )
+
+        _ROW_BY_SEQUENCE[seq] = feat
+        sig_to_rows[signature].append(feat)
+
+    # 2) assign group id + label per group, fill _GROUP_INFO_BY_SIG
+    gid_counter = 1
+    for sig, rows in sig_to_rows.items():
+        gid = f"G{gid_counter:03d}"
+        gid_counter += 1
+
+        # representative row (row đầu)
+        rep = rows[0].row_id
+        count = len(rows)
+
+        # label group: dùng SLM 1 lần cho group hoặc rule
+        sample = rows[0]
+        # nếu muốn dùng SLM:
+        # tag, p = _slm_group_label(sig, sample)
+        # nếu muốn pure rule:
+        tag, p = _rule_tag_priority(sample,group_size=len(rows))
 
         _GROUP_INFO_BY_SIG[sig] = {
             "gid": gid,
             "tag": tag,
             "p": p,
             "count": str(count),
-            "rep": rep.row_id,
-            "anchor": rep.anchor,
-            "aba": str(rep.aba_count),
-            "buniq": str(rep.b_unique),
+            "rep": str(rep),
+            "anchor": sample.anchor,
+            "aba": str(sample.aba_count),
+            "buniq": str(sample.b_unique),
         }
 
 
@@ -434,4 +595,100 @@ def get_slm_analysis(fact_text, sequence_action):
         f"A={info['anchor']}|ABA={info['aba']}|Buniq={info['buniq']}"
     )
     _CACHE[key] = out
+    return out
+
+
+def parse_analysis_line(line: str) -> Dict[str, str]:
+    """
+    Parse compact triage line:
+    G=<id>|TAG=<...>|P=<...>|COUNT=<...>|REP=<...>|A=<...>|ABA=<...>|Buniq=<...>
+    """
+    parsed: Dict[str, str] = {}
+    for part in str(line).split("|"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        parsed[key.strip()] = value.strip()
+    return parsed
+
+
+def _as_int(value: Optional[str], default: int = 0) -> int:
+    try:
+        return int(str(value))
+    except Exception:
+        return default
+
+
+def analysis_line_to_dict(line: str) -> Dict[str, Any]:
+    parsed = parse_analysis_line(line)
+
+    group_id = parsed.get("G", "G000")
+    tag = parsed.get("TAG", "MIXED")
+    priority = parsed.get("P", "LOW")
+    group_size = _as_int(parsed.get("COUNT"), default=1)
+    representative_id = parsed.get("REP", "NA")
+    anchor_action = parsed.get("A", "-")
+    aba_count = _as_int(parsed.get("ABA"), default=0)
+    b_unique = _as_int(parsed.get("Buniq"), default=0)
+
+    tag_human = _TAG_HUMAN.get(tag, _TAG_HUMAN["MIXED"])
+    priority_human = _PRIORITY_HUMAN.get(priority, _PRIORITY_HUMAN["LOW"])
+
+    if anchor_action == "-":
+        anchor_text = "khong xac dinh action truc"
+    else:
+        anchor_text = f"action truc A={anchor_action}"
+
+    human_text = (
+        f"Nhom {group_id} co {group_size} truong hop (mau dai dien: {representative_id}). "
+        f"Kieu bat thuong: {tag_human}. "
+        f"Thong tin rollback: {anchor_text}, so vong A-B-A={aba_count}, so bien the B={b_unique}. "
+        f"Muc uu tien xu ly: {priority_human}."
+    )
+
+    return {
+        "group_id": group_id,
+        "tag": tag,
+        "tag_human": tag_human,
+        "priority": priority,
+        "priority_human": priority_human,
+        "group_size": group_size,
+        "representative_id": representative_id,
+        "anchor_action": anchor_action,
+        "aba_count": aba_count,
+        "b_unique": b_unique,
+        "human_text": human_text,
+        "raw": str(line),
+    }
+
+
+def explain_analysis_line(line: str) -> str:
+    return str(analysis_line_to_dict(line)["human_text"])
+
+
+def enrich_analysis_dataframe(
+    df,
+    analysis_column: str = "ai_assistance",
+    human_column: str = "ai_assistance_human",
+):
+    """
+    Add structured columns + human-readable explanation from compact triage codes.
+    """
+    if analysis_column not in df.columns:
+        raise ValueError(f"Khong tim thay cot '{analysis_column}' trong DataFrame.")
+
+    out = df.copy()
+    parsed_rows = out[analysis_column].fillna("").map(analysis_line_to_dict)
+
+    out["triage_group_id"] = parsed_rows.map(lambda x: x["group_id"])
+    out["triage_tag"] = parsed_rows.map(lambda x: x["tag"])
+    out["triage_tag_human"] = parsed_rows.map(lambda x: x["tag_human"])
+    out["triage_priority"] = parsed_rows.map(lambda x: x["priority"])
+    out["triage_priority_human"] = parsed_rows.map(lambda x: x["priority_human"])
+    out["triage_group_size"] = parsed_rows.map(lambda x: x["group_size"])
+    out["triage_representative_id"] = parsed_rows.map(lambda x: x["representative_id"])
+    out["triage_anchor_action"] = parsed_rows.map(lambda x: x["anchor_action"])
+    out["triage_aba_count"] = parsed_rows.map(lambda x: x["aba_count"])
+    out["triage_b_unique"] = parsed_rows.map(lambda x: x["b_unique"])
+    out[human_column] = parsed_rows.map(lambda x: x["human_text"])
     return out
