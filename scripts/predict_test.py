@@ -2,6 +2,11 @@ import torch
 import numpy as np
 import pandas as pd
 import pickle
+import tensorflow as tf
+from src.training import train_combine as tc
+import joblib
+import os
+from src.training.train_lstm import *
 
 from src.models.transformer_model import TransformerModel
 
@@ -168,6 +173,134 @@ def main():
 
     print("✅ Saved submission.csv")
 
+def predict_test_combine():
+    # 1. CONFIGURATION (Phải khớp với Train)
+    # ======================================================
+    CFG = {
+        'SEED': 42,
+        'MAX_LEN': 37,
+        'N_ENSEMBLE': 12,
+        'TARGET_COLS': ['attr_1','attr_2','attr_3','attr_4','attr_5','attr_6'],
+        'MODEL_DIR': 'models/combine',
+        'DATA_PATH': 'data',
+        'SUBMISSION_FILE': 'submission_combine_reproduced.csv'
+    }
+    
+    # 2. LOAD DATA
+    # ======================================================
+    print("⏳ [PREDICT] Loading Test Data...")
+    # Chỉ cần load file X_test (Layer 2 đã có feature)
+    df_test = pd.read_csv(f"{CFG['DATA_PATH']}/layer2/X_test.csv")
+    
+    # 3. PREPROCESS TEST DATA
+    # ======================================================
+    print("⚙️ Processing Test Data...")
+    
+    # A. Sequence
+    X_test_seq = tc.process_sequences_val(tc.get_sequences(df_test), CFG['MAX_LEN'])
+    
+    # B. Manual Stats
+    X_test_stats = tc.get_stats(df_test)
+    
+    # C. Scale (Load Scaler Full từ file)
+    print("   Loading Scaler...")
+    try:
+        scaler_full = joblib.load(f"{CFG['MODEL_DIR']}/scaler_full.pkl")
+        X_test_stats_sc = scaler_full.transform(X_test_stats)
+    except FileNotFoundError:
+        print("❌ Lỗi: Không tìm thấy 'scaler_full.pkl'. Hãy chạy train_main.py trước!")
+        return
 
+    # 4. LOAD MODELS & PREDICT
+    # ======================================================
+    print("\n🚀 Starting Ensemble Prediction...")
+    
+    all_models_preds = []
+    model_files = sorted([f for f in os.listdir(CFG['MODEL_DIR']) if f.endswith('.keras')])
+    
+    if len(model_files) == 0:
+        print(f"❌ Lỗi: Không tìm thấy model nào trong {CFG['MODEL_DIR']}")
+        return
+
+    for i, m_file in enumerate(model_files):
+        print(f"   Using model {i+1}/{len(model_files)}: {m_file}...", end="\r")
+        
+        # Load model
+        model_path = os.path.join(CFG['MODEL_DIR'], m_file)
+        model = tf.keras.models.load_model(model_path)
+        
+        # Predict
+        preds = model.predict([X_test_seq, X_test_stats_sc], verbose=0)
+        all_models_preds.append(preds)
+        
+        # Clear RAM
+        tf.keras.backend.clear_session()
+        
+    print("\n   ✅ All models executed.")
+
+    # 5. VOTING & SUBMISSION
+    # ======================================================
+    print("⏳ Voting & Decoding...")
+    submission = {'id': df_test['id']}
+
+    for i, col in enumerate(CFG['TARGET_COLS']):
+        # Load Encoder
+        le = joblib.load(f"{CFG['MODEL_DIR']}/encoder_{col}.pkl")
+        
+        # Average Probabilities (Soft Voting)
+        col_preds = [m[i] for m in all_models_preds]
+        avg_probs = np.mean(col_preds, axis=0)
+        
+        # Get Label
+        pred_labels = np.argmax(avg_probs, axis=1)
+        
+        # Inverse Transform
+        submission[col] = le.inverse_transform(pred_labels)
+
+    # Save
+    sub_df = pd.DataFrame(submission)
+    sub_df.to_csv('submission_combine_seed42_final.csv', index=False)
+    print(f"\n🏆 DONE! Submission saved to: submission_combine_seed42_final.csv")
+
+def predict_test_lstm():
+    MODEL_DIR = "models/lstm"
+    N_ENSEMBLE = 10
+    target_cols = ['attr_1', 'attr_2', 'attr_3', 'attr_4', 'attr_5', 'attr_6']
+
+    print("⏳ Loading Pre-trained objects & Test data...")
+    df_test = pd.read_csv('data/layer2/X_test.csv')
+    encoders = joblib.load(f'{MODEL_DIR}/encoders.pkl')
+    scaler = joblib.load(f'{MODEL_DIR}/scaler.pkl')
+
+    # 1. Preprocess Test Data
+    X_test_seq = process_sequences_val(get_sequences(df_test), max_len=37)
+    X_test_stats = scaler.transform(get_stats(df_test))
+
+    # 2. Ensemble Inference
+    all_preds = [] # Để lưu kết quả của từng model
+    print(f"🚀 Đang dự đoán với {N_ENSEMBLE} models...")
+
+    for i in range(N_ENSEMBLE):
+        model_path = f'{MODEL_DIR}/lstm_model_{i}.h5'
+        model = tf.keras.models.load_model(model_path)
+        preds = model.predict([X_test_seq, X_test_stats], verbose=0)
+        all_preds.append(preds)
+        print(f"✅ Model {i+1} xong.")
+
+    # 3. Soft Voting (Trung bình xác suất)
+    submission = {'id': df_test['id']}
+
+    for idx, col in enumerate(target_cols):
+        # all_preds[model_index][output_index]
+        col_probs = np.mean([model_pred[idx] for model_pred in all_preds], axis=0)
+        final_labels = np.argmax(col_probs, axis=1)
+        submission[col] = encoders[col].inverse_transform(final_labels)
+
+    # 4. Xuất File
+    sub_df = pd.DataFrame(submission)
+    sub_df.to_csv('submission_final_lstm.csv', index=False)
+    print("\n🔥 ĐÃ XUẤT FILE: submission_final_lstm.csv")
+    print(sub_df.head())
 if __name__ == "__main__":
     main()
+    predict_test_combine()

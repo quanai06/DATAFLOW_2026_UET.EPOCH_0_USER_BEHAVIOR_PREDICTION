@@ -2,14 +2,14 @@ import argparse
 import torch
 import os
 import numpy as np
-import pandas as pd
 import joblib
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from src.training import train_combine as tc
+from src.training.train_lstm import *
 
 from src.training.train_transformer import train_transformer
 from src.metrics.metrics import evaluate_model
@@ -126,7 +126,7 @@ def transformer():
     print("\n===== FULL MODEL VAL METRICS =====")
     print(val_results_full)
 
-def combine_lstm_gru_cnn():
+def train_combine():
     # 1. CONFIGURATION
     # ======================================================
     CFG = {
@@ -139,17 +139,20 @@ def combine_lstm_gru_cnn():
         'CNN_KERNEL_SIZE': 3,
         'BATCH_SIZE': 128,
         'EPOCHS': 18,
-        'N_ENSEMBLE': 12, # 4 LSTM + 4 GRU + 4 CNN
+        'N_ENSEMBLE': 12, 
         'TARGET_COLS': ['attr_1','attr_2','attr_3','attr_4','attr_5','attr_6'],
         'MODEL_DIR': 'models/combine',
         'DATA_PATH': 'data'
     }
+    
     os.makedirs(CFG['MODEL_DIR'], exist_ok=True)
     tc.seed_everything(CFG['SEED'])
+
     # 2. PREPARE DATA
     # ======================================================
-    # Load Data
+    print("⏳ [TRAIN] Loading Data...")
     df_train, df_val, df_test, X_full, df_y_train, df_y_val, Y_full = tc.load_data(CFG['DATA_PATH'])
+
     # --- Process Sequences ---
     print("⚙️ Processing Sequences...")
     X_train_seq = tc.process_sequences_val(tc.get_sequences(df_train), CFG['MAX_LEN'])
@@ -164,7 +167,6 @@ def combine_lstm_gru_cnn():
     print("⚙️ Processing Manual Stats...")
     X_train_stats = tc.get_stats(df_train)
     X_val_stats   = tc.get_stats(df_val)
-    X_test_stats  = tc.get_stats(df_test)
     X_full_stats  = tc.get_stats(X_full)
 
     # --- Scale Stats (Phase 1: Fit on Train) ---
@@ -175,12 +177,12 @@ def combine_lstm_gru_cnn():
     X_train_stats_sc = scaler_p1.transform(X_train_stats)
     X_val_stats_sc   = scaler_p1.transform(X_val_stats)
     NUM_WIDE_FEATURES = X_train_stats.shape[1]
-    print(f"   Num features: {NUM_WIDE_FEATURES}")
 
     # --- Encode Labels ---
     print("⚙️ Encoding Labels...")
     encoders = tc.fit_encode_labels(Y_full, CFG['TARGET_COLS'])
-    # Save encoders
+    
+    # Save encoders (QUAN TRỌNG: Lưu để file predict dùng lại)
     for col, le in encoders.items():
         joblib.dump(le, f"{CFG['MODEL_DIR']}/encoder_{col}.pkl")
 
@@ -202,13 +204,12 @@ def combine_lstm_gru_cnn():
         x=[X_train_seq, X_train_stats_sc],
         y=y_train_list,
         validation_data=([X_val_seq, X_val_stats_sc], y_val_list),
-        epochs=12, # Ít epoch để check nhanh
+        epochs=12,
         batch_size=CFG['BATCH_SIZE'],
         callbacks=[early_stop],
         verbose=1
     )
 
-    # Eval F1
     val_preds = check_model.predict([X_val_seq, X_val_stats_sc], verbose=0)
     f1_scores = []
     print("\n📊 Validation Scores:")
@@ -227,23 +228,18 @@ def combine_lstm_gru_cnn():
     print("🚀 PHASE 2: FULL TRAINING & ENSEMBLE")
     print("="*40)
 
-    # Re-fit scaler on Full Data
+    # Re-fit scaler on Full Data và lưu lại
     scaler_full = StandardScaler()
     scaler_full.fit(X_full_stats)
     joblib.dump(scaler_full, f"{CFG['MODEL_DIR']}/scaler_full.pkl")
 
     X_full_stats_sc = scaler_full.transform(X_full_stats)
-    X_test_stats_sc = scaler_full.transform(X_test_stats)
-
-    all_models_preds = []
 
     for i in range(CFG['N_ENSEMBLE']):
-        # Reseed per model
         current_seed = CFG['SEED'] + i
         tc.seed_everything(current_seed)
         tf.keras.backend.clear_session()
         
-        # Select Model Architecture (4 LSTM - 4 GRU - 4 CNN)
         if i < 4: m_type = 'lstm'
         elif i < 8: m_type = 'gru'
         else: m_type = 'cnn'
@@ -257,37 +253,16 @@ def combine_lstm_gru_cnn():
             y=y_full_encoded_list,
             epochs=CFG['EPOCHS'],
             batch_size=CFG['BATCH_SIZE'],
-            verbose=0, # Silent mode
+            verbose=0,
             shuffle=True
         )
         
         # Save Model
         model_path = f"{CFG['MODEL_DIR']}/model_{i}_{m_type}.keras"
         model.save(model_path)
-        
-        # Predict Test
-        preds = model.predict([X_test_seq, X_test_stats_sc], verbose=0)
-        all_models_preds.append(preds)
+        print(f"   ✅ Saved: {model_path}")
 
-    # ======================================================
-    # 5. SUBMISSION
-    # ======================================================
-    print("\n⏳ Voting & Creating Submission...")
-    submission = {'id': df_test['id']}
-
-    for i, col in enumerate(CFG['TARGET_COLS']):
-        # Average Probabilities
-        col_preds = [m[i] for m in all_models_preds]
-        avg_probs = np.mean(col_preds, axis=0)
-        pred_labels = np.argmax(avg_probs, axis=1)
-        
-        submission[col] = encoders[col].inverse_transform(pred_labels)
-
-    sub_df = pd.DataFrame(submission)
-    filename = f"submission_combine_seed{CFG['SEED']}_final.csv"
-    sub_df.to_csv(filename, index=False)
-
-    print(f"\n🏆 DONE! File saved to: {filename}")
+    print("\n🏁 TRAINING COMPLETE. Models saved.")
 
 def main():
 
@@ -306,7 +281,59 @@ def main():
     else:
         raise ValueError("Unknown model")
 
+def train_lstm():
+    # Config
+    SEED = 42
+    N_ENSEMBLE = 10
+    MODEL_DIR = "models/lstm"
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    target_cols = ['attr_1', 'attr_2', 'attr_3', 'attr_4', 'attr_5', 'attr_6']
+
+    seed_everything(SEED)
+    df_train, df_val, df_test, X_full, df_y_train, df_y_val, Y_full = load_data()
+
+    # 1. Processing Labels & Scaler
+    encoders = {}
+    for col in target_cols:
+        le = LabelEncoder()
+        le.fit(Y_full[col])
+        encoders[col] = le
+    joblib.dump(encoders, f'{MODEL_DIR}/encoders.pkl')
+
+    scaler = StandardScaler()
+    X_full_stats_raw = get_stats(X_full)
+    X_full_stats_scaled = scaler.fit_transform(X_full_stats_raw)
+    joblib.dump(scaler, f'{MODEL_DIR}/scaler.pkl')
+
+    # 2. Processing Sequences
+    X_full_seq = process_sequences_val(get_sequences(X_full), max_len=37)
+    y_full_list = [encoders[col].transform(Y_full[col]) for col in target_cols]
+
+    vocab_size = np.max(X_full_seq) + 1
+    n_stats = X_full_stats_scaled.shape[1]
+    class_weights = get_multi_output_class_weights(Y_full, target_cols)
+
+    print(f"🚀 Bắt đầu Train Ensemble {N_ENSEMBLE} Models...")
+    for i in range(N_ENSEMBLE):
+        curr_seed = SEED + i
+        seed_everything(curr_seed)
+        print(f"--- Training Model {i+1} (Seed {curr_seed}) ---")
+        
+        model = build_model_hybrid(vocab_size, n_stats, target_cols, encoders)
+        model.fit(
+            x=[X_full_seq, X_full_stats_scaled],
+            y=y_full_list,
+            epochs=15,
+            batch_size=128,
+            class_weight=class_weights,
+            verbose=0
+        )
+        model.save(f'{MODEL_DIR}/lstm_model_{i}.h5')
+        print(f"✅ Đã lưu Model {i+1}")
+
+    print("🏆 QUÁ TRÌNH HUẤN LUYỆN HOÀN TẤT!")
 
 if __name__ == "__main__":
     main()
-    combine_lstm_gru_cnn()
+    train_combine()
+    train_lstm()
