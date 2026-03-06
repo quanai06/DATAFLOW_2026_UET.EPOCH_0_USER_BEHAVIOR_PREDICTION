@@ -15,9 +15,7 @@ Giải pháp dự đoán hành vi người dùng từ chuỗi Action ID ẩn dan
 6. [Đánh giá](#6-đánh-giá)
 7. [Cấu trúc thư mục](#7-cấu-trúc-thư-mục)
 8. [Cài đặt và chạy dự án](#8-cài-đặt-và-chạy-dự-án)
-9. [Ứng dụng thực tiễn](#9-ứng-dụng-thực-tiễn)
-10. [Giới hạn và hướng phát triển](#10-giới-hạn-và-hướng-phát-triển)
-11. [Tác giả](#11-tác-giả)
+9. [Giới hạn và hướng phát triển](#10-giới-hạn-và-hướng-phát-triển)
 
 ---
 
@@ -210,3 +208,5 @@ Dạng output compact:
 
 ```text
 G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
+
+## 6.Đánh giá
