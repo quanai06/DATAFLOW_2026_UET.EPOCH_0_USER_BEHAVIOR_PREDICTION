@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pickle
 
-RAW_PATH = "data/layer1_raw"
+RAW_PATH = "data/layer2"
 SAVE_PATH = "data/layer3_features/transformer"
 
 MAX_LEN = 37
@@ -68,6 +68,7 @@ def build_features(df):
 
     sequences = []
     masks = []
+    lengths = []
 
     for _, row in df.iterrows():
 
@@ -77,8 +78,10 @@ def build_features(df):
         sequences.append(pad)
         masks.append(mask)
 
-    return np.array(sequences), np.array(masks)
+        length = min(len(seq), MAX_LEN)
+        lengths.append(length)
 
+    return np.array(sequences), np.array(masks)
 
 def main():
 
@@ -94,7 +97,7 @@ def main():
     y_train = pd.read_csv(f"{RAW_PATH}/Y_train.csv")
     y_val = pd.read_csv(f"{RAW_PATH}/Y_val.csv")
     test_seq, test_mask = build_features(X_test)
-
+    
     # =====================
     # Build features
     # =====================
@@ -104,9 +107,10 @@ def main():
     # =====================
     # Save features
     # =====================
+    
     np.save(f"{SAVE_PATH}/X_train_seq.npy", train_seq)
     np.save(f"{SAVE_PATH}/X_train_mask.npy", train_mask)
-
+    
     np.save(f"{SAVE_PATH}/X_val_seq.npy", val_seq)
     np.save(f"{SAVE_PATH}/X_val_mask.npy", val_mask)
 
@@ -118,6 +122,7 @@ def main():
 
     np.save(f"{SAVE_PATH}/y_train.npy", y_train_arr)
     np.save(f"{SAVE_PATH}/y_val.npy", y_val_arr)
+
 
     with open(f"{SAVE_PATH}/encoders.pkl", "wb") as f:
         pickle.dump(encoders, f)

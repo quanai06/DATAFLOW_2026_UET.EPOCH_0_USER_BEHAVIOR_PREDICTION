@@ -34,30 +34,49 @@ class TransformerModel(nn.Module):
         )
 
         # ===== multi heads =====
+        combined_dim = d_model * 3 #neu them last/first token
+        # combined_dim = d_model
         self.heads = nn.ModuleList([
-            nn.Linear(d_model, n) for n in num_classes_list
+            nn.Linear(combined_dim, n) for n in num_classes_list
         ])
 
     def forward(self, x, mask):
 
         batch_size, seq_len = x.shape
-
+    
         pos = torch.arange(seq_len, device=x.device)
         pos = pos.unsqueeze(0).expand(batch_size, seq_len)
-
+    
         x = self.embedding(x) + self.pos_embedding(pos)
-
+    
         x = self.encoder(x, src_key_padding_mask=mask)
-
-        # masked mean pooling
+    
+        # # ===== first token =====
+        # first_token_emb = x[:, 0, :]
+    
+        # ===== masked mean pooling =====
         mask_inv = (~mask).unsqueeze(-1)
-        x = x * mask_inv
-
-        sum_x = x.sum(dim=1)
+        x_masked = x * mask_inv
+    
+        sum_x = x_masked.sum(dim=1)
         count = mask_inv.sum(dim=1).clamp(min=1)
-
         pooled = sum_x / count
+        
+        # ===== max pooling =====
+        x_for_max = x.masked_fill(mask.unsqueeze(-1), -1e9)
+        max_pooled = x_for_max.max(dim=1)[0]
+    
+        # ===== last valid token =====
+        lengths = mask_inv.squeeze(-1).sum(dim=1).long()
+        last_indices = (lengths - 1).clamp(min=0)
+    
+        last_token_emb = x[torch.arange(batch_size, device=x.device), last_indices]
+    
+        # ===== concat =====
+        # combined = torch.cat([pooled, first_token_emb, last_token_emb], dim=1)
+        combined = torch.cat([pooled, max_pooled, last_token_emb], dim=1)
 
-        outputs = [head(pooled) for head in self.heads]
-
+    
+        outputs = [head(combined) for head in self.heads]
+    
         return outputs

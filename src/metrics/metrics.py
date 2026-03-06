@@ -1,67 +1,67 @@
 import torch
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import f1_score # Thêm thư viện này
 
+def exact_match(y_true, y_pred):
+    return np.mean(np.all(y_true == y_pred, axis=1))
 
 def evaluate_model(model, loader, device):
+    is_ensemble = isinstance(model, list)
 
-    model.eval()
+    if is_ensemble:
+        for m in model: m.eval()
+    else:
+        model.eval()
 
     all_preds = []
     all_labels = []
 
     with torch.no_grad():
-
         for x, mask, y in loader:
-
             x = x.to(device)
             mask = mask.to(device)
 
-            outputs = model(x, mask)
+            if is_ensemble:
+                outputs_sum = None
+                for m in model:
+                    outputs = m(x, mask)
+                    if outputs_sum is None:
+                        outputs_sum = [o.clone() for o in outputs]
+                    else:
+                        for i in range(len(outputs)):
+                            outputs_sum[i] += outputs[i]
+                outputs = outputs_sum
+            else:
+                outputs = model(x, mask)
 
-            preds = []
-
+            # Lấy argmax cho từng head trong 6 heads
+            batch_preds = []
             for out in outputs:
-                p = torch.argmax(out, dim=1)
-                preds.append(p)
+                batch_preds.append(torch.argmax(out, dim=1).cpu().numpy())
+            
+            # Chuyển về shape (batch_size, 6)
+            batch_preds = np.stack(batch_preds, axis=1)
 
-            preds = torch.stack(preds, dim=1)
+            all_preds.append(batch_preds)
+            all_labels.append(y.numpy() if isinstance(y, torch.Tensor) else y)
 
-            all_preds.append(preds.cpu().numpy())
-            all_labels.append(y.numpy())
+    all_preds = np.concatenate(all_preds)
+    all_labels = np.concatenate(all_labels)
 
-    y_pred = np.concatenate(all_preds, axis=0)
-    y_true = np.concatenate(all_labels, axis=0)
+    # 1. Tính Exact Match Accuracy (Chỉ số chính của cuộc thi)
+    em_score = exact_match(all_labels, all_preds)
 
-    # ======================
-    # Exact Match Accuracy
-    # ======================
-    exact_match = np.mean(np.all(y_pred == y_true, axis=1))
+    # 2. Tính F1-Score (Để theo dõi hiệu quả xử lý nhãn lệch)
+    # Chúng ta tính Macro F1 cho từng cột rồi lấy trung bình chung
+    f1_per_col = []
+    for i in range(6):
+        col_f1 = f1_score(all_labels[:, i], all_preds[:, i], average='macro')
+        f1_per_col.append(col_f1)
+    
+    avg_f1 = np.mean(f1_per_col)
 
-    # ======================
-    # Per-task accuracy
-    # ======================
-    task_acc = []
-
-    for i in range(y_true.shape[1]):
-        acc = accuracy_score(y_true[:, i], y_pred[:, i])
-        task_acc.append(acc)
-
-    # ======================
-    # Per-task F1
-    # ======================
-    task_f1 = []
-
-    for i in range(y_true.shape[1]):
-        f1 = f1_score(y_true[:, i], y_pred[:, i], average="macro")
-        task_f1.append(f1)
-
-    results = {
-        "exact_match": exact_match,
-        "task_accuracy": task_acc,
-        "task_f1": task_f1,
-        "mean_task_acc": np.mean(task_acc),
-        "mean_task_f1": np.mean(task_f1),
+    return {
+        "exact_match_accuracy": float(em_score),
+        "macro_f1_score": float(avg_f1),
+        "f1_per_attribute": [round(f, 4) for f in f1_per_col] # Chi tiết từng nhãn
     }
-
-    return results

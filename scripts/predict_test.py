@@ -6,67 +6,65 @@ import pickle
 from src.models.transformer_model import TransformerModel
 
 
-# =========================
-# Load test features
-# =========================
 def load_test_data(feature_path):
 
     X_seq = np.load(f"{feature_path}/X_test_seq.npy")
     X_mask = np.load(f"{feature_path}/X_test_mask.npy")
 
-    return torch.tensor(X_seq), torch.tensor(X_mask)
+    return torch.LongTensor(X_seq), torch.BoolTensor(X_mask)
 
 
-# =========================
-# Decode predictions về label gốc
-# =========================
-def decode_predictions(preds, encoders):
+def ensemble_predict(models, X_seq, X_mask, device):
 
-    decoded_cols = []
-
-    for i, mapping in enumerate(encoders):
-
-        # mapping gốc: value -> index
-        inverse_map = {v: k for k, v in mapping.items()}
-
-        col = [inverse_map[idx] for idx in preds[:, i]]
-        decoded_cols.append(col)
-
-    decoded = np.stack(decoded_cols, axis=1)
-
-    return decoded
-
-
-# =========================
-# Predict
-# =========================
-def predict(model, X_seq, X_mask, device):
-
-    model.eval()
-
-    preds = []
+    for m in models:
+        m.eval()
 
     with torch.no_grad():
 
         X_seq = X_seq.to(device)
         X_mask = X_mask.to(device)
 
-        outputs = model(X_seq, X_mask)
+        outputs_sum = None
+        
+        weights = [1, 1, 1, 1, 1, 0.5]
+        
+        for m, w in zip(models, weights):
 
-        for out in outputs:
+            outputs = m(X_seq, X_mask)
+
+            if outputs_sum is None:
+                outputs_sum = outputs
+            else:
+                for i in range(len(outputs)):
+                    outputs_sum[i] += outputs[i] * w;
+
+        preds = []
+
+        for out in outputs_sum:
             preds.append(torch.argmax(out, dim=1).cpu().numpy())
 
-    preds = np.stack(preds, axis=1)
+        preds = np.stack(preds, axis=1)
 
     return preds
 
 
-# =========================
-# Main
-# =========================
+def decode_predictions(preds, encoders):
+
+    decoded = np.zeros_like(preds)
+
+    for col in range(preds.shape[1]):
+
+        mapping = encoders[col]
+        inv_map = {v: k for k, v in mapping.items()}
+
+        decoded[:, col] = np.vectorize(inv_map.get)(preds[:, col])
+
+    return decoded
+
+
 def main():
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     feature_path = "data/layer3_features/transformer"
 
@@ -75,19 +73,54 @@ def main():
     # ======================
     with open(f"{feature_path}/encoders.pkl", "rb") as f:
         encoders = pickle.load(f)
+        
+    # ======================
+    # Load config from fold0
+    # ======================
+    ckpt = torch.load("models/transformer/transformer_fold_0.pt", map_location=device)
+    config = ckpt["config"]
 
-    num_classes_list = [len(e) for e in encoders]
+    num_classes_list = ckpt["num_classes_list"]
 
     # ======================
-    # Load model config
+    # Load all fold models
     # ======================
-    checkpoint = torch.load("models/transformer_model.pt", map_location=device)
-    config = checkpoint["config"]
+    models = []
+
+    n_splits = config.get("n_splits", 5)
+
+    for fold in range(n_splits):
+
+        ckpt = torch.load(
+            f"models/transformer/transformer_fold_{fold}.pt",
+            map_location=device
+        )
+
+        model = TransformerModel(
+            vocab_size=config["vocab_size"],
+            num_classes_list=num_classes_list,
+            d_model=config["d_model"],
+            nhead=config["nhead"],
+            num_layers=config["num_layers"],
+            dim_ff=config["dim_ff"],
+            max_len=config["max_len"]
+        )
+
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.to(device)
+
+        models.append(model)
+
 
     # ======================
-    # Build model
+    # Load FULL model
     # ======================
-    model = TransformerModel(
+    ckpt = torch.load(
+        "models/transformer/transformer_full.pt",
+        map_location=device
+    )
+    
+    model_full = TransformerModel(
         vocab_size=config["vocab_size"],
         num_classes_list=num_classes_list,
         d_model=config["d_model"],
@@ -96,34 +129,29 @@ def main():
         dim_ff=config["dim_ff"],
         max_len=config["max_len"]
     )
-
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.to(device)
-
-    print("✅ Model loaded")
-
+    
+    model_full.load_state_dict(ckpt["model_state_dict"])
+    model_full.to(device)
+    
+    models.append(model_full) 
+    # models = [model_full]
+    
     # ======================
-    # Load test data
+    # Load test features
     # ======================
     X_seq, X_mask = load_test_data(feature_path)
 
-    # ======================
-    # Predict
-    # ======================
-    preds = predict(model, X_seq, X_mask, device)
+    preds = ensemble_predict(models, X_seq, X_mask, device)
+
+    preds = decode_predictions(preds, encoders)
 
     # ======================
-    # Decode về label gốc
-    # ======================
-    preds_decoded = decode_predictions(preds, encoders)
-
-    # ======================
-    # Load ID
+    # Create submission
     # ======================
     test_df = pd.read_csv("data/layer1_raw/X_test.csv")
 
     result = pd.DataFrame(
-        preds_decoded,
+        preds,
         columns=[
             "attr_1",
             "attr_2",
@@ -138,7 +166,7 @@ def main():
 
     result.to_csv("submission.csv", index=False)
 
-    print("🎯 Saved submission.csv")
+    print("✅ Saved submission.csv")
 
 
 if __name__ == "__main__":
