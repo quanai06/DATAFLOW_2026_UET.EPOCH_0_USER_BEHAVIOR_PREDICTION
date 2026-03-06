@@ -34,8 +34,13 @@ class TransformerModel(nn.Module):
         )
 
         # ===== multi heads =====
+<<<<<<< HEAD
         combined_dim = d_model * 3 #neu them last/first token
         # combined_dim = d_model
+=======
+        # combined_dim = d_model * 3 #neu them last/first token
+        combined_dim = d_model
+>>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
         self.heads = nn.ModuleList([
             nn.Linear(combined_dim, n) for n in num_classes_list
         ])
@@ -61,20 +66,31 @@ class TransformerModel(nn.Module):
         sum_x = x_masked.sum(dim=1)
         count = mask_inv.sum(dim=1).clamp(min=1)
         pooled = sum_x / count
+<<<<<<< HEAD
         
         # ===== max pooling =====
         x_for_max = x.masked_fill(mask.unsqueeze(-1), -1e9)
         max_pooled = x_for_max.max(dim=1)[0]
+=======
+>>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
     
         # ===== last valid token =====
         lengths = mask_inv.squeeze(-1).sum(dim=1).long()
         last_indices = (lengths - 1).clamp(min=0)
     
+<<<<<<< HEAD
         last_token_emb = x[torch.arange(batch_size, device=x.device), last_indices]
     
         # ===== concat =====
         # combined = torch.cat([pooled, first_token_emb, last_token_emb], dim=1)
         combined = torch.cat([pooled, max_pooled, last_token_emb], dim=1)
+=======
+        # last_token_emb = x[torch.arange(batch_size, device=x.device), last_indices]
+    
+        # ===== concat =====
+        # combined = torch.cat([pooled, first_token_emb, last_token_emb], dim=1)
+        combined = torch.cat([pooled], dim=1)
+>>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
     
         outputs = [head(combined) for head in self.heads]

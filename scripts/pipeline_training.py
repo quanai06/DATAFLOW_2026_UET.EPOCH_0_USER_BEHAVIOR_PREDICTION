@@ -7,6 +7,7 @@ from src.data.loaders import get_transformer_loaders
 from src.models.transformer_model import TransformerModel
 from src.training.train_transformer import train_full_model
 
+<<<<<<< HEAD
 def print_results(results, title):
     print(f"\n{'='*20} {title} {'='*20}")
     print(f"Overall Exact Match Accuracy: {results['exact_match_accuracy']:.4f}")
@@ -17,6 +18,8 @@ def print_results(results, title):
         print(f"  Attr_{i+1}: {f1:.4f}")
     print(f"{'='*50}")
     
+=======
+>>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 def transformer():
 
     config = {
@@ -27,12 +30,21 @@ def transformer():
         "num_classes_list": [12, 31, 99, 12, 31, 99],
         "drop_out": 0.3,
 
+<<<<<<< HEAD
         "d_model": 256,
         "nhead": 8,
         "num_layers": 4,
         "dim_ff": 512,
         "max_len": 37,
         
+=======
+        "d_model": 128,
+        "nhead": 4,
+        "num_layers": 3,
+        "dim_ff": 128,
+        "max_len": 37,
+
+>>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
         "n_splits": 5
     }
 
@@ -52,6 +64,8 @@ def transformer():
     # Load all fold models
     # ======================
     models = []
+<<<<<<< HEAD
+=======
 
     for fold in range(config["n_splits"]):
 
@@ -59,6 +73,80 @@ def transformer():
             f"models/transformer/transformer_fold_{fold}.pt",
             map_location=device
         )
+
+        model = TransformerModel(
+            vocab_size=config["vocab_size"],
+            num_classes_list=config["num_classes_list"],
+            d_model=config["d_model"],
+            nhead=config["nhead"],
+            num_layers=config["num_layers"],
+            dim_ff=config["dim_ff"],
+            max_len=config["max_len"]
+        )
+
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.to(device)
+        model.eval()
+
+        models.append(model)
+
+    # ======================
+    # Evaluate ensemble
+    # ======================
+    train_results = evaluate_model(models, train_loader, device)
+    val_results = evaluate_model(models, val_loader, device)
+>>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
+
+    for fold in range(config["n_splits"]):
+
+<<<<<<< HEAD
+        ckpt = torch.load(
+            f"models/transformer/transformer_fold_{fold}.pt",
+            map_location=device
+        )
+=======
+    print("\n===== VAL METRICS =====")
+    print(val_results)
+    
+    # ======================
+    # Train FULL model
+    # ======================
+    train_full_model(config)
+    
+    # ======================
+    # Load FULL model
+    # ======================
+    ckpt = torch.load(
+        "models/transformer/transformer_full.pt",
+        map_location=device
+    )
+    
+    model_full = TransformerModel(
+        vocab_size=config["vocab_size"],
+        num_classes_list=config["num_classes_list"],
+        d_model=config["d_model"],
+        nhead=config["nhead"],
+        num_layers=config["num_layers"],
+        dim_ff=config["dim_ff"],
+        max_len=config["max_len"]
+    )
+    
+    model_full.load_state_dict(ckpt["model_state_dict"])
+    model_full.to(device)
+    model_full.eval()
+    
+    # ======================
+    # Evaluate FULL
+    # ======================
+    train_results_full = evaluate_model(model_full, train_loader, device)
+    val_results_full = evaluate_model(model_full, val_loader, device)
+    
+    print("\n===== FULL MODEL TRAIN METRICS =====")
+    print(train_results_full)
+    
+    print("\n===== FULL MODEL VAL METRICS =====")
+    print(val_results_full)
+>>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
         model = TransformerModel(
             vocab_size=config["vocab_size"],
