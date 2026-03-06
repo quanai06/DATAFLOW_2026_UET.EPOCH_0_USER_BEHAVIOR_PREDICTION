@@ -6,7 +6,7 @@ import tensorflow as tf
 from src.training import train_combine as tc
 import joblib
 import os
-from src.training.train_lstm import *
+from src.training import train_lstm as tl
 
 from src.models.transformer_model import TransformerModel
 
@@ -227,8 +227,10 @@ def predict_test_combine():
         
         # Load model
         model_path = os.path.join(CFG['MODEL_DIR'], m_file)
-        model = tf.keras.models.load_model(model_path)
-        
+        # Đổi đuôi h5 thành keras và thêm safe_mode=False
+        model_path = f'{CFG["MODEL_DIR"]}/lstm_model_{i}.keras' 
+        model = tf.keras.models.load_model(model_path, safe_mode=False)
+                
         # Predict
         preds = model.predict([X_test_seq, X_test_stats_sc], verbose=0)
         all_models_preds.append(preds)
@@ -273,16 +275,22 @@ def predict_test_lstm():
     scaler = joblib.load(f'{MODEL_DIR}/scaler.pkl')
 
     # 1. Preprocess Test Data
-    X_test_seq = process_sequences_val(get_sequences(df_test), max_len=37)
-    X_test_stats = scaler.transform(get_stats(df_test))
+    X_test_seq = tl.process_sequences_val(tl.get_sequences(df_test), max_len=37)
+    X_test_stats = scaler.transform(tl.get_stats(df_test))
 
     # 2. Ensemble Inference
     all_preds = [] # Để lưu kết quả của từng model
     print(f"🚀 Đang dự đoán với {N_ENSEMBLE} models...")
 
     for i in range(N_ENSEMBLE):
-        model_path = f'{MODEL_DIR}/lstm_model_{i}.h5'
-        model = tf.keras.models.load_model(model_path)
+        model_path = f'models/lstm/lstm_model_{i}.keras' 
+        if os.path.exists(model_path):
+            model = tf.keras.models.load_model(model_path, safe_mode=False)
+        else:
+            print(f"❌ Không tìm thấy file: {model_path}")
+            # Nếu vẫn dùng đuôi cũ .h5 thì thử:
+            # model_path = f'models/lstm/lstm_model_{i}.h5'
+            # model = tf.keras.models.load_model(model_path, safe_mode=False)
         preds = model.predict([X_test_seq, X_test_stats], verbose=0)
         all_preds.append(preds)
         print(f"✅ Model {i+1} xong.")
@@ -301,6 +309,8 @@ def predict_test_lstm():
     sub_df.to_csv('submission_final_lstm.csv', index=False)
     print("\n🔥 ĐÃ XUẤT FILE: submission_final_lstm.csv")
     print(sub_df.head())
+
 if __name__ == "__main__":
-    main()
-    predict_test_combine()
+    # main()
+    # predict_test_combine()
+    predict_test_lstm()

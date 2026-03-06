@@ -9,7 +9,7 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from src.training import train_combine as tc
-from src.training.train_lstm import *
+from src.training import train_lstm as tl
 
 from src.training.train_transformer import train_transformer
 from src.metrics.metrics import evaluate_model
@@ -289,8 +289,8 @@ def train_lstm():
     os.makedirs(MODEL_DIR, exist_ok=True)
     target_cols = ['attr_1', 'attr_2', 'attr_3', 'attr_4', 'attr_5', 'attr_6']
 
-    seed_everything(SEED)
-    df_train, df_val, df_test, X_full, df_y_train, df_y_val, Y_full = load_data()
+    tl.seed_everything(SEED)
+    df_train, df_val, df_test, X_full, df_y_train, df_y_val, Y_full = tl.load_data()
 
     # 1. Processing Labels & Scaler
     encoders = {}
@@ -301,39 +301,61 @@ def train_lstm():
     joblib.dump(encoders, f'{MODEL_DIR}/encoders.pkl')
 
     scaler = StandardScaler()
-    X_full_stats_raw = get_stats(X_full)
+    X_full_stats_raw = tl.get_stats(X_full)
     X_full_stats_scaled = scaler.fit_transform(X_full_stats_raw)
     joblib.dump(scaler, f'{MODEL_DIR}/scaler.pkl')
 
     # 2. Processing Sequences
-    X_full_seq = process_sequences_val(get_sequences(X_full), max_len=37)
-    y_full_list = [encoders[col].transform(Y_full[col]) for col in target_cols]
+    # 2. Prepare Data
+    X_train_seq = tl.process_sequences_val(tl.get_sequences(df_train), max_len=37)
+    X_val_seq   = tl.process_sequences_val(tl.get_sequences(df_val), max_len=37)
+    X_full_seq  = tl.process_sequences_val(tl.get_sequences(X_full), max_len=37)
+
+    y_train_list = [encoders[col].transform(df_y_train[col]) for col in target_cols]
+    y_val_list   = [encoders[col].transform(df_y_val[col]) for col in target_cols]
+    y_full_list  = [encoders[col].transform(Y_full[col]) for col in target_cols]
 
     vocab_size = np.max(X_full_seq) + 1
     n_stats = X_full_stats_scaled.shape[1]
-    class_weights = get_multi_output_class_weights(Y_full, target_cols)
 
-    print(f"🚀 Bắt đầu Train Ensemble {N_ENSEMBLE} Models...")
+    # ======================================================
+    # GIAI ĐOẠN 1: KIỂM TRA F1 (Validation)
+    # ======================================================
+    print("\n🔍 GIAI ĐOẠN 1: KIỂM TRA F1 TRÊN TẬP VAL...")
+    scaler_p1 = StandardScaler()
+    X_train_stats_sc = scaler_p1.fit_transform(tl.get_stats(df_train))
+    X_val_stats_sc   = scaler_p1.transform(tl.get_stats(df_val))
+
+    sw_train = tl.calculate_sample_weights(y_train_list, target_cols)
+
+    check_model = tl.build_model_hybrid(vocab_size, n_stats, target_cols, encoders)
+    check_model.fit(
+        x=[X_train_seq, X_train_stats_sc], y=y_train_list,
+        validation_data=([X_val_seq, X_val_stats_sc], y_val_list),
+        epochs=12, batch_size=128, sample_weight=sw_train, verbose=1
+    )
+    tl.evaluate_f1(check_model, [X_val_seq, X_val_stats_sc], y_val_list, target_cols)
+
+    # ======================================================
+    # GIAI ĐOẠN 2: TRAIN FULL ENSEMBLE
+    # ======================================================
+    print("\n🚀 GIAI ĐOẠN 2: TRAIN FULL ENSEMBLE...")
+    sw_full = tl.calculate_sample_weights(y_full_list, target_cols)
+
     for i in range(N_ENSEMBLE):
-        curr_seed = SEED + i
-        seed_everything(curr_seed)
-        print(f"--- Training Model {i+1} (Seed {curr_seed}) ---")
-        
-        model = build_model_hybrid(vocab_size, n_stats, target_cols, encoders)
+        tl.seed_everything(SEED + i)
+        print(f"--- Training Model {i+1}/{N_ENSEMBLE} ---")
+        model = tl.build_model_hybrid(vocab_size, n_stats, target_cols, encoders)
         model.fit(
-            x=[X_full_seq, X_full_stats_scaled],
-            y=y_full_list,
-            epochs=15,
-            batch_size=128,
-            class_weight=class_weights,
-            verbose=0
+            x=[X_full_seq, X_full_stats_scaled], y=y_full_list,
+            epochs=15, batch_size=128, sample_weight=sw_full, verbose=0
         )
-        model.save(f'{MODEL_DIR}/lstm_model_{i}.h5')
-        print(f"✅ Đã lưu Model {i+1}")
+        model.save(f'{MODEL_DIR}/lstm_model_{i}.keras')
 
-    print("🏆 QUÁ TRÌNH HUẤN LUYỆN HOÀN TẤT!")
+
+    print("🏆 TẤT CẢ MODEL ĐÃ ĐƯỢC LƯU!")
 
 if __name__ == "__main__":
-    main()
-    train_combine()
+    # main()
+    # train_combine()
     train_lstm()
