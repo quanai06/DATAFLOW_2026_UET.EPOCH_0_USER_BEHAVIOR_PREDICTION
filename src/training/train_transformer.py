@@ -7,7 +7,6 @@ from sklearn.model_selection import KFold
 
 from src.models.transformer_model import TransformerModel
 
-<<<<<<< HEAD
 from src.models.losses import ExactMatchFocalLoss
 
 
@@ -34,18 +33,6 @@ def train_one_fold(model, loader, device, config, weights_list=None):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["epochs"])
     criterion = ExactMatchFocalLoss(weights_list=weights_list, alpha=0.01, gamma=2.0)
 
-=======
-
-def train_one_fold(model, loader, device, config):
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
-    criterions = [
-        nn.CrossEntropyLoss()
-        for _ in range(6)
-    ]
-
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
     for epoch in range(config["epochs"]):
 
         model.train()
@@ -62,15 +49,9 @@ def train_one_fold(model, loader, device, config):
             outputs = model(x_batch, mask_batch)
             loss = criterion(outputs, y_batch)
 
-<<<<<<< HEAD
             # loss = 0
             # for i in range(6):
             #     loss += criterions[i](outputs[i], y_batch[:, i])
-=======
-            loss = 0
-            for i in range(6):
-                loss += criterions[i](outputs[i], y_batch[:, i])
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -79,14 +60,10 @@ def train_one_fold(model, loader, device, config):
             total_loss += loss.item()
 
         avg_loss = total_loss / len(loader)
-<<<<<<< HEAD
         # print(f"   Epoch {epoch+1}/{config['epochs']}  Loss: {avg_loss:.4f}")
         scheduler.step()
         current_lr = optimizer.param_groups[0]['lr']
         print(f"    Epoch {epoch+1}/{config['epochs']} - LR: {current_lr:.6f} - Loss: {avg_loss:.4f}")
-=======
-        print(f"   Epoch {epoch+1}/{config['epochs']}  Loss: {avg_loss:.4f}")
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
 
 def train_transformer(config):
@@ -128,13 +105,10 @@ def train_transformer(config):
 
         print(f"\n========== FOLD {fold+1}/{n_splits} ==========")
 
-<<<<<<< HEAD
         y_train_fold = y[train_idx]
         weights_list = get_class_weights(y_train_fold)
         weights_list = [w.to(device) for w in weights_list] # Đưa lên GPU
         
-=======
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
         train_subset = Subset(dataset, train_idx)
 
         loader = DataLoader(
@@ -162,11 +136,7 @@ def train_transformer(config):
         # ========================
         # Train
         # ========================
-<<<<<<< HEAD
         train_one_fold(model, loader, device, config, weights_list=weights_list)
-=======
-        train_one_fold(model, loader, device, config)
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
         # ========================
         # Save
@@ -194,12 +164,9 @@ def train_full_model(config):
     mask = np.load(f"{feature_path}/X_train_mask.npy")
     y = np.load(f"{feature_path}/y_train.npy")
     
-<<<<<<< HEAD
     weights_list = get_class_weights(y)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     weights_list = [w.to(device) for w in weights_list]
-=======
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
     dataset = TensorDataset(
         torch.LongTensor(X),
@@ -229,11 +196,7 @@ def train_full_model(config):
 
     print("\n========== TRAIN FULL DATA ==========")
 
-<<<<<<< HEAD
     train_one_fold(model, loader, device, config, weights_list=weights_list)
-=======
-    train_one_fold(model, loader, device, config)
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
     Path("models").mkdir(exist_ok=True)
 
