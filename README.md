@@ -208,5 +208,79 @@ Dạng output compact:
 
 ```text
 G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
-
+```
 ## 6.Đánh giá
+## 7.Cấu trúc thư mục và cách chạy 
+
+
+## Cấu trúc thư mục
+
+  ```text
+  DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION/
+  ├── .gitignore                                  # Khai báo file/thư mục bỏ qua khi commit
+  ├── README.md                                   # Tài liệu mô tả dự án
+  ├── requirements.txt                            # Danh sách thư viện Python
+  ├── submission.csv                              # Kết quả dự đoán để nộp
+  ├── submission_combine_seed42_final.csv         # Kết quả từ pipeline combine/ensemble
+  │
+  ├── data/                                       # Dữ liệu theo từng tầng xửlý
+  │   ├── layer1_raw/                             # Dữ liệu gốc đã tách train/val/test
+  │   │   ├── X_train.csv                         # Feature train
+  │   │   ├── X_val.csv                           # Feature validation
+  │   │   ├── X_test.csv                          # Feature test
+  │   │   ├── Y_train.csv                         # Label train
+  │   │   └── Y_val.csv                           # Label validation
+  │   ├── layer2/                                 # Dữ liệu sau tiền xử lý +manual features
+  │   │   ├── X_train.csv
+  │   │   ├── X_val.csv
+  │   │   ├── X_test.csv
+  │   │   ├── Y_train.csv
+  │   │   ├── Y_val.csv
+  │   │   └── full_with_manual_features.csv       # Bảng dữ liệu đầy đủ kèm đặc trưng thủ công
+  │   └── layer3_features/
+  │       └── transformer/                        # Feature chuyên biệt cho Transformer
+  │
+  ├── models/                                     # Trọng số model và object đã huấn luyện
+  │   ├── combine/
+  │   │   ├── model_*_{lstm,gru,cnn}.keras        # Các model con dùng choensemble
+  │   │   ├── encoder_attr_*.pkl                  # Encoder cho biến phân loại
+  │   │   └── scaler_*.pkl                        # Scaler chuẩn hóa đặc trưng
+  │   └── transformer/
+  │       ├── transformer_fold_0.pt               # Checkpoint fold 0
+  │       ├── transformer_fold_1.pt               # Checkpoint fold 1
+  │       ├── transformer_fold_2.pt               # Checkpoint fold 2
+  │       ├── transformer_fold_3.pt               # Checkpoint fold 3
+  │       ├── transformer_fold_4.pt               # Checkpoint fold 4
+  │       └── transformer_full.pt                 # Model huấn luyện trên toànbộ dữ liệu
+  │
+  ├── src/                                        # Mã nguồn chính
+  │   ├── ai/
+  │   │   ├── slm.py                              # Thành phần AI/LLM hỗ trợ
+  │   │   └── translator.py                       # Dịch/chuẩn hóa dữ liệu text
+  │   ├── data/
+  │   │   ├── loaders.py                          # Hàm đọc và chuẩn bị dữ liệu
+  │   │   ├── create_feature.py                   # Tạo đặc trưng thủ công
+  │   │   └── build_transformer_features.py       # Tạo feature cho Transformer
+  │   ├── metrics/
+  │   │   └── metrics.py                          # Metric đánh giá mô hình
+  │   ├── models/
+  │   │   ├── transformer_model.py                # Định nghĩa kiến trúc
+  Transformer
+  │   │   └── losses.py                           # Custom loss functions
+  │   └── training/
+  │       ├── train_lstm.py                       # Huấn luyện LSTM
+  │       ├── train_transformer.py                # Huấn luyện Transformer
+  │       └── train_combine.py                    # Huấn luyện/kết hợp mô hìnhensemble
+  │
+  ├── scripts/                                    # Script chạy pipeline
+  │   ├── pipeline_training.py                    # Pipeline huấn luyện end-to-end
+  │   ├── pipeline_ai.py                          # Pipeline có hỗ trợ AI
+  │   └── predict_test.py                         # Sinh dự đoán trên tập test
+  │
+  ├── notebooks/
+  │   └── processing_data.ipynb                   # Notebook EDA + tiền xử lý thử nghiệm
+  │
+  ├── figures/                                    # Hình minh họa/biểu đồ phân tích
+  └── report/
+      └── ai_assistance_report.csv                # Báo cáo hỗ trợ AI trong quá trình làm
+```
