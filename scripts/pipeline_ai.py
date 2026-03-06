@@ -19,7 +19,7 @@ def run_ai_pipeline(X_test_df, output_path="report/ai_assistance_report.csv"):
     # Sử dụng hàm generate_edge_case_report từ translator.py
     report_df = generate_edge_case_report(df_featured).copy()
     
-    if report_df.empty:
+    if len(report_df)==0:
         print("Không tìm thấy trường hợp nào thỏa mãn điều kiện bất thường nghiêm trọng.")
         return None
 
@@ -37,9 +37,28 @@ def run_ai_pipeline(X_test_df, output_path="report/ai_assistance_report.csv"):
 
     report_df['ai_assistance'] = report_df.apply(apply_ai, axis=1)
 
+    priority_order = {
+        'HIGH': 0,
+        'MEDIUM': 1,
+        'LOW': 2
+    }
+
+    def get_priority_rank(ai_string):
+        """Hàm phụ để lấy mức độ ưu tiên từ chuỗi kết quả của SLM"""
+        if 'P=HIGH' in ai_string: return priority_order['HIGH']
+        if 'P=MEDIUM' in ai_string: return priority_order['MEDIUM']
+        if 'P=LOW' in ai_string: return priority_order['LOW']
+        return 3 # Mức mặc định nếu không tìm thấy
+
+    # 2. Tạo cột tạm để sắp xếp
+    report_df['temp_priority_rank'] = report_df['ai_assistance'].apply(get_priority_rank)
+
+    # 3. Sắp xếp: Ưu tiên (Priority) trước, sau đó đến ID hoặc Entropy (tùy chọn)
+    report_df = report_df.sort_values(by=['temp_priority_rank', 'id'], ascending=[True, True])
+
     # --- Bước 4: Định dạng lại và xuất file CSV ---
     # Giữ đúng các cột yêu cầu: id, action_sequence, fact, ai_assistance
-    final_output = report_df[['id', 'action_sequence','first_action_rb', 'fact', 'ai_assistance']]
+    final_output = report_df[['id', 'action_sequence','first_action_rb', 'ai_assistance']]
     
     # Xuất file với encoding utf-8-sig để đọc được tiếng Việt trong Excel
     final_output.to_csv(output_path, index=False, encoding='utf-8-sig')
