@@ -1,13 +1,6 @@
 import torch
 import numpy as np
-<<<<<<< HEAD
 from sklearn.metrics import f1_score # Thêm thư viện này
-=======
-
-
-def exact_match(y_true, y_pred):
-    return np.mean(np.all(y_true == y_pred, axis=1))
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
 def exact_match(y_true, y_pred):
     return np.mean(np.all(y_true == y_pred, axis=1))
@@ -15,19 +8,8 @@ def exact_match(y_true, y_pred):
 def evaluate_model(model, loader, device):
     is_ensemble = isinstance(model, list)
 
-<<<<<<< HEAD
     if is_ensemble:
         for m in model: m.eval()
-=======
-    # =====================
-    # Allow ensemble
-    # =====================
-    is_ensemble = isinstance(model, list)
-
-    if is_ensemble:
-        for m in model:
-            m.eval()
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
     else:
         model.eval()
 
@@ -40,7 +22,6 @@ def evaluate_model(model, loader, device):
             mask = mask.to(device)
 
             if is_ensemble:
-<<<<<<< HEAD
                 outputs_sum = None
                 for m in model:
                     outputs = m(x, mask)
@@ -52,31 +33,10 @@ def evaluate_model(model, loader, device):
                 outputs = outputs_sum
             else:
                 outputs = model(x, mask)
-=======
-
-                outputs_sum = None
-
-                for m in model:
-                    outputs = m(x, mask)
-
-                    if outputs_sum is None:
-                        outputs_sum = outputs
-                    else:
-                        for i in range(len(outputs)):
-                            outputs_sum[i] += outputs[i]
-
-                outputs = outputs_sum
-
-            else:
-                outputs = model(x, mask)
-
-            preds = []
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
             # Lấy argmax cho từng head trong 6 heads
             batch_preds = []
             for out in outputs:
-<<<<<<< HEAD
                 batch_preds.append(torch.argmax(out, dim=1).cpu().numpy())
             
             # Chuyển về shape (batch_size, 6)
@@ -104,20 +64,4 @@ def evaluate_model(model, loader, device):
         "exact_match_accuracy": float(em_score),
         "macro_f1_score": float(avg_f1),
         "f1_per_attribute": [round(f, 4) for f in f1_per_col] # Chi tiết từng nhãn
-=======
-                preds.append(torch.argmax(out, dim=1).cpu().numpy())
-
-            preds = np.stack(preds, axis=1)
-
-            all_preds.append(preds)
-            all_labels.append(y.numpy())
-
-    all_preds = np.concatenate(all_preds)
-    all_labels = np.concatenate(all_labels)
-
-    score = exact_match(all_labels, all_preds)
-
-    return {
-        "exact_match_accuracy": float(score)
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
     }
