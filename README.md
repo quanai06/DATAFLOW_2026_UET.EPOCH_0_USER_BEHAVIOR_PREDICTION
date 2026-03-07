@@ -1,9 +1,17 @@
-##README
-# USER BEHAVIOR PREDICTION – DATAFLOW 2026
+<div align="center">
+    
+  <img src="dataflow.png" width="200" alt="logo" />
+
+  # USER BEHAVIOR PREDICTION – DATAFLOW 2026
 
 Giải pháp dự đoán hành vi người dùng từ chuỗi Action ID ẩn danh, kết hợp **EDA**, **Feature Engineering**, **Edge-case Analysis** và các mô hình học sâu để phục vụ dự báo nhu cầu, tối ưu vận hành và hỗ trợ giám sát hành vi bất thường.
+  
+  ![Python](https://img.shields.io/badge/Python-3.12-red?logo=python&logoColor=white)
+  ![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter&logoColor=white)
+</div>
 
 ---
+
 
 ## Mục lục
 
