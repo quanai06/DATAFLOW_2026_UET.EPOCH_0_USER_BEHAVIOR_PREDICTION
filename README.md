@@ -1,9 +1,17 @@
-##README
-# USER BEHAVIOR PREDICTION – DATAFLOW 2026
+<div align="center">
+    
+  <img src="dataflow.png" width="200" alt="logo" />
+
+  # USER BEHAVIOR PREDICTION – DATAFLOW 2026
 
 Giải pháp dự đoán hành vi người dùng từ chuỗi Action ID ẩn danh, kết hợp **EDA**, **Feature Engineering**, **Edge-case Analysis** và các mô hình học sâu để phục vụ dự báo nhu cầu, tối ưu vận hành và hỗ trợ giám sát hành vi bất thường.
+  
+  ![Python](https://img.shields.io/badge/Python-3.12-red?logo=python&logoColor=white)
+  ![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter&logoColor=white)
+</div>
 
 ---
+
 
 ## Mục lục
 
@@ -15,9 +23,7 @@ Giải pháp dự đoán hành vi người dùng từ chuỗi Action ID ẩn dan
 6. [Đánh giá](#6-đánh-giá)
 7. [Cấu trúc thư mục](#7-cấu-trúc-thư-mục)
 8. [Cài đặt và chạy dự án](#8-cài-đặt-và-chạy-dự-án)
-9. [Ứng dụng thực tiễn](#9-ứng-dụng-thực-tiễn)
-10. [Giới hạn và hướng phát triển](#10-giới-hạn-và-hướng-phát-triển)
-11. [Tác giả](#11-tác-giả)
+9. [Giới hạn và hướng phát triển](#9-giới-hạn-và-hướng-phát-triển)
 
 ---
 
@@ -210,45 +216,175 @@ Dạng output compact:
 
 ```text
 G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
-
----
-
-## Reproduction Guide (v3/v4 High-Score Pipeline)
-
-### Pipeline order
-
 ```
-Step 1: Build features
-python3 src/data/create_feature.py                  # layer2: stat features
-python3 src/data/build_transformer_features.py      # layer3: sequences, masks, stats tensors
+## 6. Đánh giá
 
-Step 2: Train v2 (needed for v3 pseudo-labeling)
-python3 run_improved.py                             # → models/transformer_v2/
 
-Step 3: Train v3 (LB=0.97956)
-python3 run_v3.py                                   # → models/transformer_v3/  (36 models, ~4h)
+### 1. Accuracy theo từng thuộc tính
 
-Step 4: Train v4 (bigger model, uses v3 pseudo-labels)
-python3 run_v4.py                                   # → models/transformer_v4/  (48 models, ~5h)
+| Model            | Attr_1 | Attr_2 | Attr_3 | Attr_4 | Attr_5 | Attr_6 | Overall |
+|------------------|-------:|-------:|-------:|-------:|-------:|-------:|--------:|
+| LSTM             | 0.9922 | 0.9982 | 0.9972 | 0.9982 | 0.9971 | 0.9992 | 0.99139 |
+| LSTM+GRU+CNN     | 0.9875 | 0.9985 | 0.9973 | 0.9849 | 0.9991 | 0.9992 | 0.99389 |
+| Transformer      | **0.9983** | **0.9990** | **0.9979** | **0.9986** | **0.9985** | **0.9981** | **0.9926** |
 
-Step 5: Generate submission
-python3 make_final_submission.py                    # v3 + BiLSTM ensemble → submission_best.csv
-python3 make_tta_submission.py                      # v3 + TTA             → submission_tta.csv
+### 2. F1-score theo từng thuộc tính
+
+| Model            | Attr_1 | Attr_2 | Attr_3 | Attr_4 | Attr_5 | Attr_6 | Macro F1 |
+|------------------|-------:|-------:|-------:|-------:|-------:|-------:|---------:|
+| LSTM             | 0.9768 | 0.9975 | 0.9972 | 0.9719 | 0.9971 | 0.9991 | 0.98994 |
+| LSTM+GRU+CNN     | 0.9875 | 0.9985 | 0.9973 | 0.9849 | 0.9991 | 0.9992 | 0.99444 |
+| Transformer      | **0.9750** | **0.9986** | **0.9978** | **0.9777** | **0.9976** | **0.9980** | **0.9908** |
+
+### 3. Nhận xét
+
+- **Transformer** đạt accuracy cao nhất ở hầu hết các thuộc tính.
+- **LSTM+GRU+CNN** cho kết quả **Macro F1 cao nhất**, cho thấy khả năng cân bằng hiệu quả giữa các nhãn tốt hơn.
+- **LSTM** có kết quả ổn định nhưng nhìn chung thấp hơn hai mô hình còn lại.
+- Nhìn tổng thể, **Transformer** mạnh về độ chính xác theo từng thuộc tính, trong khi **LSTM+GRU+CNN** có lợi thế hơn về hiệu quả phân loại tổng quát theo F1.
+## 7. Cấu trúc thư mục
+
+
+### Cấu trúc thư mục
+
+  ```text
+  DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION/
+  ├── .gitignore                                  # Khai báo file/thư mục bỏ qua khi commit
+  ├── README.md                                   # Tài liệu mô tả dự án
+  ├── requirements.txt                            # Danh sách thư viện Python
+  ├── submission.csv                              # Kết quả dự đoán để nộp
+  ├── submission_combine_seed42_final.csv         # Kết quả từ pipeline combine/ensemble
+  │
+  ├── data/                                       # Dữ liệu theo từng tầng xửlý
+  │   ├── layer1_raw/                             # Dữ liệu gốc đã tách train/val/test
+  │   │   ├── X_train.csv                         # Feature train
+  │   │   ├── X_val.csv                           # Feature validation
+  │   │   ├── X_test.csv                          # Feature test
+  │   │   ├── Y_train.csv                         # Label train
+  │   │   └── Y_val.csv                           # Label validation
+  │   ├── layer2/                                 # Dữ liệu sau tiền xử lý +manual features
+  │   │   ├── X_train.csv
+  │   │   ├── X_val.csv
+  │   │   ├── X_test.csv
+  │   │   ├── Y_train.csv
+  │   │   ├── Y_val.csv
+  │   │   └── full_with_manual_features.csv       # Bảng dữ liệu đầy đủ kèm đặc trưng thủ công
+  │   └── layer3_features/
+  │       └── transformer/                        # Feature chuyên biệt cho Transformer
+  │
+  ├── models/                                     # Trọng số model và object đã huấn luyện
+  │   ├── combine/
+  │   │   ├── model_*_{lstm,gru,cnn}.keras        # Các model con dùng choensemble
+  │   │   ├── encoder_attr_*.pkl                  # Encoder cho biến phân loại
+  │   │   └── scaler_*.pkl                        # Scaler chuẩn hóa đặc trưng
+  │   └── transformer/
+  │       ├── transformer_fold_0.pt               # Checkpoint fold 0
+  │       ├── transformer_fold_1.pt               # Checkpoint fold 1
+  │       ├── transformer_fold_2.pt               # Checkpoint fold 2
+  │       ├── transformer_fold_3.pt               # Checkpoint fold 3
+  │       ├── transformer_fold_4.pt               # Checkpoint fold 4
+  │       └── transformer_full.pt                 # Model huấn luyện trên toànbộ dữ liệu
+  │
+  ├── src/                                        # Mã nguồn chính
+  │   ├── ai/
+  │   │   ├── slm.py                              # Thành phần AI/LLM hỗ trợ
+  │   │   └── translator.py                       # Dịch/chuẩn hóa dữ liệu text
+  │   ├── data/
+  │   │   ├── loaders.py                          # Hàm đọc và chuẩn bị dữ liệu
+  │   │   ├── create_feature.py                   # Tạo đặc trưng thủ công
+  │   │   └── build_transformer_features.py       # Tạo feature cho Transformer
+  │   ├── metrics/
+  │   │   └── metrics.py                          # Metric đánh giá mô hình
+  │   ├── models/
+  │   │   ├── transformer_model.py                # Định nghĩa kiến trúc
+  Transformer
+  │   │   └── losses.py                           # Custom loss functions
+  │   └── training/
+  │       ├── train_lstm.py                       # Huấn luyện LSTM
+  │       ├── train_transformer.py                # Huấn luyện Transformer
+  │       └── train_combine.py                    # Huấn luyện/kết hợp mô hìnhensemble
+  │
+  ├── scripts/                                    # Script chạy pipeline
+  │   ├── pipeline_training.py                    # Pipeline huấn luyện end-to-end
+  │   ├── pipeline_ai.py                          # Pipeline có hỗ trợ AI
+  │   └── predict_test.py                         # Sinh dự đoán trên tập test
+  │
+  ├── notebooks/
+  │   └── processing_data.ipynb                   # Notebook EDA + tiền xử lý thử nghiệm
+  │
+  ├── figures/                                    # Hình minh họa/biểu đồ phân tích
+  └── report/
+      └── ai_assistance_report.csv                # Báo cáo hỗ trợ AI trong quá trình làm
+```
+## 8. Cài đặt và chạy dự án 
+**Yêu cầu hệ thống:**
+
+Python 3.10 trở lên, tối thiểu 8gb RAM 
+
+Các thư viện phụ thuộc trong file requirements.txt
+
+### 1. Clone dự án
+```bash
+git clone https://github.com/quanai06/DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION.git
+cd DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION
 ```
 
-### Hardware
-- GPU: RTX 4080 16GB (or similar 16GB+ GPU)
-- RAM: 16GB+
-- v4 requires batch_size=256; reduce if OOM
+### 2. Tạo môi trường ảo (khuyến nghị)
+```bash
+python -m venv .venv
+# Trên Linux/Macos
+source .venv/bin/activate  
+# Trên Windows: 
+source .venv\Scripts\activate
+```
 
-### Val metrics (v4 ensemble, 27 models)
-| Attr | Classes | Macro-F1 | Accuracy |
-|------|---------|----------|----------|
-| attr_1 | 12 | 1.0000 | 1.0000 |
-| attr_2 | 31 | 1.0000 | 1.0000 |
-| attr_3 | 99 | 0.9993 | 0.9993 |
-| attr_4 | 12 | 0.9950 | 0.9997 |
-| attr_5 | 31 | 0.9994 | 0.9996 |
-| attr_6 | 99 | 0.9994 | 0.9994 |
-| **Mean** | | **0.9988** | |
-| **Exact Match** | | | **99.83%** |
+### 3. Cài đặt thư viện
+```bash
+pip install -r requirements.txt
+```
+
+##  Cách sử dụng
+
+### Chạy toàn bộ pipeline 
+Chạy lần lượt các file theo thứ tự sau:
+Chú ý: Nếu huấn luyện lại tất cả model, thời gian xấp xỉ 3-4 tiếng.
+```bash
+
+# scripts train model (local)
+python scripts/pipeline_training.py
+# scripts test (load model)
+python scripts/pipeline_test.py
+# scripts predict submit kaggle
+python scripts/make_v3_submission.py
+# scripts ai
+python scripts/pipeline_ai.py
+```
+## 9. Giới hạn và hướng phát triển
+### Hạn chế
+
+- Dữ liệu đầu vào chỉ gồm các chuỗi **Action ID ẩn danh**, không mang ngữ nghĩa nghiệp vụ trực tiếp, nên khả năng diễn giải sâu từng hành vi vẫn còn hạn chế.
+- Một số **Action ID** có mức tương quan rất cao với nhãn, khiến mô hình có nguy cơ học theo các tín hiệu nổi bật thay vì học đầy đủ cấu trúc hành vi của toàn chuỗi.
+- Các trường hợp **hiếm, bất thường hoặc phức tạp** vẫn khó xử lý triệt để và cần một lớp phân tích riêng để nhận diện tốt hơn.
+- Hệ thống hiện chủ yếu được đánh giá trong bối cảnh huấn luyện và kiểm thử offline, nên chưa phản ánh đầy đủ các biến động khi triển khai thực tế theo thời gian thực.
+- Giải pháp **ensemble đa mô hình** giúp cải thiện hiệu năng nhưng đồng thời làm tăng chi phí huấn luyện, suy luận và độ phức tạp khi triển khai.
+
+### Hướng phát triển
+
+- Xây dựng pipeline theo hướng **streaming-friendly** để cập nhật online các đặc trưng hành vi và hỗ trợ cơ chế cảnh báo sớm cho các phiên có rủi ro cao.
+- Theo dõi sự thay đổi của dữ liệu theo thời gian nhằm tăng độ bền vững của mô hình khi hành vi người dùng hoặc quy trình nghiệp vụ thay đổi.
+- Hoàn thiện lớp xử lý **edge-case** để nhận diện tốt hơn các chuỗi bất thường, hiếm gặp hoặc có dấu hiệu nhiễu.
+- Nghiên cứu các cách giảm sự phụ thuộc của mô hình vào một số Action ID nổi trội, từ đó nâng cao khả năng tổng quát hóa.
+- Tối ưu kiến trúc theo hướng nhẹ hơn, cân bằng giữa hiệu năng dự báo và khả năng triển khai thực tế.
+## 👥 8. Tác giả và giấy phép
+
+Dự án này được thực hiện bởi nhóm sinh viên từ trường [UET - VNU](https://uet.vnu.edu.vn) gồm 4 thành viên:
+
+* **Lê Hoàng Quân** - Trưởng Nhóm
+* **Vũ Hoàng Diệu Linh** 
+* **Nguyễn Thị Hiền** 
+* **Dương Trọng Nguyên** 
+
+<div align="center">
+  <p>Được phát triển bởi nhóm UET_EPOCH0</p>
+  <p>Trường Đại học Công nghệ - Đại học Quốc gia Hà Nội</p>
+</div>
