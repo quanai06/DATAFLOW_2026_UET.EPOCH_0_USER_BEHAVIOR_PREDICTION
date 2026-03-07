@@ -210,3 +210,45 @@ Dạng output compact:
 
 ```text
 G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
+
+---
+
+## Reproduction Guide (v3/v4 High-Score Pipeline)
+
+### Pipeline order
+
+```
+Step 1: Build features
+python3 src/data/create_feature.py                  # layer2: stat features
+python3 src/data/build_transformer_features.py      # layer3: sequences, masks, stats tensors
+
+Step 2: Train v2 (needed for v3 pseudo-labeling)
+python3 run_improved.py                             # → models/transformer_v2/
+
+Step 3: Train v3 (LB=0.97956)
+python3 run_v3.py                                   # → models/transformer_v3/  (36 models, ~4h)
+
+Step 4: Train v4 (bigger model, uses v3 pseudo-labels)
+python3 run_v4.py                                   # → models/transformer_v4/  (48 models, ~5h)
+
+Step 5: Generate submission
+python3 make_final_submission.py                    # v3 + BiLSTM ensemble → submission_best.csv
+python3 make_tta_submission.py                      # v3 + TTA             → submission_tta.csv
+```
+
+### Hardware
+- GPU: RTX 4080 16GB (or similar 16GB+ GPU)
+- RAM: 16GB+
+- v4 requires batch_size=256; reduce if OOM
+
+### Val metrics (v4 ensemble, 27 models)
+| Attr | Classes | Macro-F1 | Accuracy |
+|------|---------|----------|----------|
+| attr_1 | 12 | 1.0000 | 1.0000 |
+| attr_2 | 31 | 1.0000 | 1.0000 |
+| attr_3 | 99 | 0.9993 | 0.9993 |
+| attr_4 | 12 | 0.9950 | 0.9997 |
+| attr_5 | 31 | 0.9994 | 0.9996 |
+| attr_6 | 99 | 0.9994 | 0.9994 |
+| **Mean** | | **0.9988** | |
+| **Exact Match** | | | **99.83%** |
