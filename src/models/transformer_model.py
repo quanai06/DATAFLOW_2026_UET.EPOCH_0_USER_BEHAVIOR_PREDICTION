@@ -13,7 +13,8 @@ class TransformerModel(nn.Module):
         num_layers=3,
         dim_ff=256,
         dropout=0.2,
-        max_len=100
+        max_len=100,
+        num_stat_features=0,  # Step 5: optional stats branch
     ):
         super().__init__()
 
@@ -33,66 +34,57 @@ class TransformerModel(nn.Module):
             num_layers=num_layers
         )
 
-        # ===== multi heads =====
-<<<<<<< HEAD
-        combined_dim = d_model * 3 #neu them last/first token
-        # combined_dim = d_model
-=======
-        # combined_dim = d_model * 3 #neu them last/first token
-        combined_dim = d_model
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
+        # Step 5: stats branch
+        self.use_stats = num_stat_features > 0
+        if self.use_stats:
+            self.stats_branch = nn.Sequential(
+                nn.Linear(num_stat_features, 64),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            )
+            combined_dim = d_model * 3 + 64
+        else:
+            combined_dim = d_model * 3  # mean + max + last token pooling (HEAD version)
+
         self.heads = nn.ModuleList([
             nn.Linear(combined_dim, n) for n in num_classes_list
         ])
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, stats=None):
 
         batch_size, seq_len = x.shape
-    
+
         pos = torch.arange(seq_len, device=x.device)
         pos = pos.unsqueeze(0).expand(batch_size, seq_len)
-    
+
         x = self.embedding(x) + self.pos_embedding(pos)
-    
+
         x = self.encoder(x, src_key_padding_mask=mask)
-    
-        # # ===== first token =====
-        # first_token_emb = x[:, 0, :]
-    
+
         # ===== masked mean pooling =====
         mask_inv = (~mask).unsqueeze(-1)
         x_masked = x * mask_inv
-    
+
         sum_x = x_masked.sum(dim=1)
         count = mask_inv.sum(dim=1).clamp(min=1)
         pooled = sum_x / count
-<<<<<<< HEAD
-        
+
         # ===== max pooling =====
         x_for_max = x.masked_fill(mask.unsqueeze(-1), -1e9)
         max_pooled = x_for_max.max(dim=1)[0]
-=======
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
-    
+
         # ===== last valid token =====
         lengths = mask_inv.squeeze(-1).sum(dim=1).long()
         last_indices = (lengths - 1).clamp(min=0)
-    
-<<<<<<< HEAD
         last_token_emb = x[torch.arange(batch_size, device=x.device), last_indices]
-    
-        # ===== concat =====
-        # combined = torch.cat([pooled, first_token_emb, last_token_emb], dim=1)
-        combined = torch.cat([pooled, max_pooled, last_token_emb], dim=1)
-=======
-        # last_token_emb = x[torch.arange(batch_size, device=x.device), last_indices]
-    
-        # ===== concat =====
-        # combined = torch.cat([pooled, first_token_emb, last_token_emb], dim=1)
-        combined = torch.cat([pooled], dim=1)
->>>>>>> 8978d180da948fc38053901f4ba01c9f10637268
 
-    
+        combined = torch.cat([pooled, max_pooled, last_token_emb], dim=1)
+
+        # Step 5: fuse stats if provided
+        if self.use_stats and stats is not None:
+            stat_emb = self.stats_branch(stats)
+            combined = torch.cat([combined, stat_emb], dim=1)
+
         outputs = [head(combined) for head in self.heads]
-    
+
         return outputs

@@ -1,2 +1,20 @@
 .venv
 **/__pycache__/
+*.pyc
+*.pyo
+
+# Data directories (top-level only)
+/data/
+/models/
+
+# Binary/large files
+*.npy
+*.pkl
+*.pt
+*.h5
+*.keras
+*.csv
+
+# Logs
+*.log
+nohup.out

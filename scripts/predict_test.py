@@ -12,257 +12,190 @@ from src.models.transformer_model import TransformerModel
 
 
 def load_test_data(feature_path):
-
-    X_seq = np.load(f"{feature_path}/X_test_seq.npy")
+    X_seq  = np.load(f"{feature_path}/X_test_seq.npy")
     X_mask = np.load(f"{feature_path}/X_test_mask.npy")
 
-    return torch.LongTensor(X_seq), torch.BoolTensor(X_mask)
+    stats_path = f"{feature_path}/X_test_stats.npy"
+    X_stats = np.load(stats_path).astype(np.float32) if os.path.exists(stats_path) else None
+
+    return torch.LongTensor(X_seq), torch.BoolTensor(X_mask), X_stats
 
 
-def ensemble_predict(models, X_seq, X_mask, device):
-
+def ensemble_predict(models, X_seq, X_mask, X_stats, device, fold_weights=None):
     for m in models:
         m.eval()
 
+    X_seq  = X_seq.to(device)
+    X_mask = X_mask.to(device)
+    stats_tensor = torch.FloatTensor(X_stats).to(device) if X_stats is not None else None
+
+    if fold_weights is None:
+        fold_weights = [1.0] * len(models)
+
+    weight_sum = sum(fold_weights)
+
     with torch.no_grad():
-
-        X_seq = X_seq.to(device)
-        X_mask = X_mask.to(device)
-
         outputs_sum = None
-        
-        weights = [1, 1, 1, 1, 1, 0.5]
-        
-        for m, w in zip(models, weights):
 
-            outputs = m(X_seq, X_mask)
+        for m, w in zip(models, fold_weights):
+            outputs = m(X_seq, X_mask, stats_tensor)
 
             if outputs_sum is None:
-                outputs_sum = outputs
+                outputs_sum = [o * (w / weight_sum) for o in outputs]
             else:
                 for i in range(len(outputs)):
-                    outputs_sum[i] += outputs[i] * w;
+                    outputs_sum[i] += outputs[i] * (w / weight_sum)
 
-        preds = []
-
-        for out in outputs_sum:
-            preds.append(torch.argmax(out, dim=1).cpu().numpy())
-
+        preds = [torch.argmax(o, dim=1).cpu().numpy() for o in outputs_sum]
         preds = np.stack(preds, axis=1)
 
     return preds
 
 
 def decode_predictions(preds, encoders):
-
     decoded = np.zeros_like(preds)
-
     for col in range(preds.shape[1]):
-
         mapping = encoders[col]
         inv_map = {v: k for k, v in mapping.items()}
-
         decoded[:, col] = np.vectorize(inv_map.get)(preds[:, col])
-
     return decoded
 
 
 def main():
-
+    """Transformer ensemble prediction."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     feature_path = "data/layer3_features/transformer"
 
-    # ======================
-    # Load encoders
-    # ======================
     with open(f"{feature_path}/encoders.pkl", "rb") as f:
         encoders = pickle.load(f)
-        
-    # ======================
-    # Load config from fold0
-    # ======================
-    ckpt = torch.load("models/transformer/transformer_fold_0.pt", map_location=device)
-    config = ckpt["config"]
 
-    num_classes_list = ckpt["num_classes_list"]
+    # Auto-detect vocab_size
+    remapper_path = f"{feature_path}/action_remapper.pkl"
+    if os.path.exists(remapper_path):
+        with open(remapper_path, "rb") as f:
+            remap_data = pickle.load(f)
+        vocab_size = remap_data["vocab_size"]
+    else:
+        vocab_size = 25000
 
-    # ======================
+    ckpt0 = torch.load("models/transformer/transformer_fold_0.pt", map_location=device)
+    config = ckpt0["config"]
+    config["vocab_size"] = vocab_size  # use correct vocab_size
+    num_classes_list = ckpt0["num_classes_list"]
+
     # Load all fold models
-    # ======================
     models = []
-
+    fold_weights = []
     n_splits = config.get("n_splits", 5)
 
     for fold in range(n_splits):
-
-        ckpt = torch.load(
-            f"models/transformer/transformer_fold_{fold}.pt",
-            map_location=device
-        )
+        ckpt = torch.load(f"models/transformer/transformer_fold_{fold}.pt", map_location=device)
+        num_stat_features = ckpt.get("num_stat_features", 0)
+        val_macro_f1 = float(ckpt.get("val_macro_f1", 1.0))
 
         model = TransformerModel(
-            vocab_size=config["vocab_size"],
+            vocab_size=vocab_size,
             num_classes_list=num_classes_list,
             d_model=config["d_model"],
             nhead=config["nhead"],
             num_layers=config["num_layers"],
             dim_ff=config["dim_ff"],
-            max_len=config["max_len"]
+            max_len=config["max_len"],
+            num_stat_features=num_stat_features,
         )
-
         model.load_state_dict(ckpt["model_state_dict"])
         model.to(device)
-
         models.append(model)
+        fold_weights.append(val_macro_f1)
 
-
-    # ======================
     # Load FULL model
-    # ======================
-    ckpt = torch.load(
-        "models/transformer/transformer_full.pt",
-        map_location=device
-    )
-    
+    ckpt_full = torch.load("models/transformer/transformer_full.pt", map_location=device)
+    num_stat_features = ckpt_full.get("num_stat_features", 0)
+    full_weight = float(ckpt_full.get("val_macro_f1", np.mean(fold_weights) if len(fold_weights) > 0 else 1.0))
+
     model_full = TransformerModel(
-        vocab_size=config["vocab_size"],
+        vocab_size=vocab_size,
         num_classes_list=num_classes_list,
         d_model=config["d_model"],
         nhead=config["nhead"],
         num_layers=config["num_layers"],
         dim_ff=config["dim_ff"],
-        max_len=config["max_len"]
+        max_len=config["max_len"],
+        num_stat_features=num_stat_features,
     )
-    
-    model_full.load_state_dict(ckpt["model_state_dict"])
+    model_full.load_state_dict(ckpt_full["model_state_dict"])
     model_full.to(device)
-    
-    models.append(model_full) 
-    # models = [model_full]
-    
-    # ======================
-    # Load test features
-    # ======================
-    X_seq, X_mask = load_test_data(feature_path)
+    models.append(model_full)
 
-    preds = ensemble_predict(models, X_seq, X_mask, device)
+    # Use validation macro-F1 weights for folds; default full model weight to their mean
+    fold_weights.append(full_weight)
+    print("Ensemble weights (folds + full):", fold_weights)
 
+    X_seq, X_mask, X_stats = load_test_data(feature_path)
+    preds = ensemble_predict(models, X_seq, X_mask, X_stats, device, fold_weights=fold_weights)
     preds = decode_predictions(preds, encoders)
 
-    # ======================
-    # Create submission
-    # ======================
     test_df = pd.read_csv("data/layer1_raw/X_test.csv")
-
-    result = pd.DataFrame(
-        preds,
-        columns=[
-            "attr_1",
-            "attr_2",
-            "attr_3",
-            "attr_4",
-            "attr_5",
-            "attr_6",
-        ],
-    )
-
+    result = pd.DataFrame(preds, columns=["attr_1", "attr_2", "attr_3", "attr_4", "attr_5", "attr_6"])
     result.insert(0, "id", test_df["id"])
-
     result.to_csv("submission.csv", index=False)
-
     print("✅ Saved submission.csv")
 
+
 def predict_test_combine():
-    # 1. CONFIGURATION (Phải khớp với Train)
-    # ======================================================
     CFG = {
         'SEED': 42,
         'MAX_LEN': 37,
         'N_ENSEMBLE': 12,
-        'TARGET_COLS': ['attr_1','attr_2','attr_3','attr_4','attr_5','attr_6'],
+        'TARGET_COLS': ['attr_1', 'attr_2', 'attr_3', 'attr_4', 'attr_5', 'attr_6'],
         'MODEL_DIR': 'models/combine',
         'DATA_PATH': 'data',
-        'SUBMISSION_FILE': 'submission_combine_reproduced.csv'
     }
-    
-    # 2. LOAD DATA
-    # ======================================================
-    print("⏳ [PREDICT] Loading Test Data...")
-    # Chỉ cần load file X_test (Layer 2 đã có feature)
-    df_test = pd.read_csv(f"{CFG['DATA_PATH']}/layer2/X_test.csv")
-    
-    # 3. PREPROCESS TEST DATA
-    # ======================================================
-    print("⚙️ Processing Test Data...")
-    
-    # A. Sequence
-    X_test_seq = tc.process_sequences_val(tc.get_sequences(df_test), CFG['MAX_LEN'])
-    
-    # B. Manual Stats
-    X_test_stats = tc.get_stats(df_test)
-    
-    # C. Scale (Load Scaler Full từ file)
-    print("   Loading Scaler...")
-    try:
-        scaler_full = joblib.load(f"{CFG['MODEL_DIR']}/scaler_full.pkl")
-        X_test_stats_sc = scaler_full.transform(X_test_stats)
-    except FileNotFoundError:
-        print("❌ Lỗi: Không tìm thấy 'scaler_full.pkl'. Hãy chạy train_main.py trước!")
-        return
 
-    # 4. LOAD MODELS & PREDICT
-    # ======================================================
+    print("⏳ [PREDICT] Loading Test Data...")
+    df_test = pd.read_csv(f"{CFG['DATA_PATH']}/layer2/X_test.csv")
+
+    print("⚙️ Processing Test Data...")
+    X_test_seq   = tc.process_sequences_val(tc.get_sequences(df_test), CFG['MAX_LEN'])
+    X_test_stats = tc.get_stats(df_test)
+
+    print("   Loading Scaler...")
+    scaler_full = joblib.load(f"{CFG['MODEL_DIR']}/scaler_full.pkl")
+    X_test_stats_sc = scaler_full.transform(X_test_stats)
+
     print("\n🚀 Starting Ensemble Prediction...")
-    
     all_models_preds = []
     model_files = sorted([f for f in os.listdir(CFG['MODEL_DIR']) if f.endswith('.keras')])
-    
+
     if len(model_files) == 0:
-        print(f"❌ Lỗi: Không tìm thấy model nào trong {CFG['MODEL_DIR']}")
+        print(f"❌ No models found in {CFG['MODEL_DIR']}")
         return
 
     for i, m_file in enumerate(model_files):
         print(f"   Using model {i+1}/{len(model_files)}: {m_file}...", end="\r")
-        
-        # Load model
         model_path = os.path.join(CFG['MODEL_DIR'], m_file)
-        # Đổi đuôi h5 thành keras và thêm safe_mode=False
-        model_path = f'{CFG["MODEL_DIR"]}/lstm_model_{i}.keras' 
         model = tf.keras.models.load_model(model_path, safe_mode=False)
-                
-        # Predict
         preds = model.predict([X_test_seq, X_test_stats_sc], verbose=0)
         all_models_preds.append(preds)
-        
-        # Clear RAM
         tf.keras.backend.clear_session()
-        
+
     print("\n   ✅ All models executed.")
 
-    # 5. VOTING & SUBMISSION
-    # ======================================================
     print("⏳ Voting & Decoding...")
     submission = {'id': df_test['id']}
 
     for i, col in enumerate(CFG['TARGET_COLS']):
-        # Load Encoder
         le = joblib.load(f"{CFG['MODEL_DIR']}/encoder_{col}.pkl")
-        
-        # Average Probabilities (Soft Voting)
         col_preds = [m[i] for m in all_models_preds]
         avg_probs = np.mean(col_preds, axis=0)
-        
-        # Get Label
         pred_labels = np.argmax(avg_probs, axis=1)
-        
-        # Inverse Transform
         submission[col] = le.inverse_transform(pred_labels)
 
-    # Save
     sub_df = pd.DataFrame(submission)
     sub_df.to_csv('submission_combine_seed42_final.csv', index=False)
-    print(f"\n🏆 DONE! Submission saved to: submission_combine_seed42_final.csv")
+    print("🏆 DONE! Saved: submission_combine_seed42_final.csv")
+
 
 def predict_test_lstm():
     MODEL_DIR = "models/lstm"
@@ -270,47 +203,37 @@ def predict_test_lstm():
     target_cols = ['attr_1', 'attr_2', 'attr_3', 'attr_4', 'attr_5', 'attr_6']
 
     print("⏳ Loading Pre-trained objects & Test data...")
-    df_test = pd.read_csv('data/layer2/X_test.csv')
+    df_test  = pd.read_csv('data/layer2/X_test.csv')
     encoders = joblib.load(f'{MODEL_DIR}/encoders.pkl')
-    scaler = joblib.load(f'{MODEL_DIR}/scaler.pkl')
+    scaler   = joblib.load(f'{MODEL_DIR}/scaler.pkl')
 
-    # 1. Preprocess Test Data
-    X_test_seq = tl.process_sequences_val(tl.get_sequences(df_test), max_len=37)
+    X_test_seq   = tl.process_sequences_val(tl.get_sequences(df_test), max_len=37)
     X_test_stats = scaler.transform(tl.get_stats(df_test))
 
-    # 2. Ensemble Inference
-    all_preds = [] # Để lưu kết quả của từng model
-    print(f"🚀 Đang dự đoán với {N_ENSEMBLE} models...")
+    all_preds = []
+    print(f"🚀 Predicting with {N_ENSEMBLE} models...")
 
     for i in range(N_ENSEMBLE):
-        model_path = f'models/lstm/lstm_model_{i}.keras' 
-        if os.path.exists(model_path):
-            model = tf.keras.models.load_model(model_path, safe_mode=False)
-        else:
-            print(f"❌ Không tìm thấy file: {model_path}")
-            # Nếu vẫn dùng đuôi cũ .h5 thì thử:
-            # model_path = f'models/lstm/lstm_model_{i}.h5'
-            # model = tf.keras.models.load_model(model_path, safe_mode=False)
+        model_path = f'models/lstm/lstm_model_{i}.keras'
+        if not os.path.exists(model_path):
+            print(f"❌ Not found: {model_path}")
+            continue
+        model = tf.keras.models.load_model(model_path, safe_mode=False)
         preds = model.predict([X_test_seq, X_test_stats], verbose=0)
         all_preds.append(preds)
-        print(f"✅ Model {i+1} xong.")
+        print(f"✅ Model {i+1} done.")
 
-    # 3. Soft Voting (Trung bình xác suất)
     submission = {'id': df_test['id']}
-
     for idx, col in enumerate(target_cols):
-        # all_preds[model_index][output_index]
-        col_probs = np.mean([model_pred[idx] for model_pred in all_preds], axis=0)
+        col_probs = np.mean([m[idx] for m in all_preds], axis=0)
         final_labels = np.argmax(col_probs, axis=1)
         submission[col] = encoders[col].inverse_transform(final_labels)
 
-    # 4. Xuất File
     sub_df = pd.DataFrame(submission)
     sub_df.to_csv('submission_final_lstm.csv', index=False)
-    print("\n🔥 ĐÃ XUẤT FILE: submission_final_lstm.csv")
+    print("\n🔥 Saved: submission_final_lstm.csv")
     print(sub_df.head())
 
+
 if __name__ == "__main__":
-    # main()
-    # predict_test_combine()
-    predict_test_lstm()
+    main()
