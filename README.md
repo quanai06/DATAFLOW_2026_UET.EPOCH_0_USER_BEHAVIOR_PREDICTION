@@ -15,7 +15,7 @@ Giải pháp dự đoán hành vi người dùng từ chuỗi Action ID ẩn dan
 6. [Đánh giá](#6-đánh-giá)
 7. [Cấu trúc thư mục](#7-cấu-trúc-thư-mục)
 8. [Cài đặt và chạy dự án](#8-cài-đặt-và-chạy-dự-án)
-9. [Giới hạn và hướng phát triển](#10-giới-hạn-và-hướng-phát-triển)
+9. [Giới hạn và hướng phát triển](#9-giới-hạn-và-hướng-phát-triển)
 
 ---
 
@@ -210,10 +210,10 @@ Dạng output compact:
 G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
 ```
 ## 6.Đánh giá
-## 7.Cấu trúc thư mục và cách chạy 
+## 7.Cấu trúc thư mục
 
 
-## Cấu trúc thư mục
+### Cấu trúc thư mục
 
   ```text
   DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION/
@@ -284,3 +284,20 @@ G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
   └── report/
       └── ai_assistance_report.csv                # Báo cáo hỗ trợ AI trong quá trình làm
 ```
+##8.Cài đặt và chạy dự án 
+##9.Giới hạn và hướng phát triển
+### Hạn chế
+
+- Dữ liệu đầu vào chỉ gồm các chuỗi **Action ID ẩn danh**, không mang ngữ nghĩa nghiệp vụ trực tiếp, nên khả năng diễn giải sâu từng hành vi vẫn còn hạn chế.
+- Một số **Action ID** có mức tương quan rất cao với nhãn, khiến mô hình có nguy cơ học theo các tín hiệu nổi bật thay vì học đầy đủ cấu trúc hành vi của toàn chuỗi.
+- Các trường hợp **hiếm, bất thường hoặc phức tạp** vẫn khó xử lý triệt để và cần một lớp phân tích riêng để nhận diện tốt hơn.
+- Hệ thống hiện chủ yếu được đánh giá trong bối cảnh huấn luyện và kiểm thử offline, nên chưa phản ánh đầy đủ các biến động khi triển khai thực tế theo thời gian thực.
+- Giải pháp **ensemble đa mô hình** giúp cải thiện hiệu năng nhưng đồng thời làm tăng chi phí huấn luyện, suy luận và độ phức tạp khi triển khai.
+
+### Hướng phát triển
+
+- Xây dựng pipeline theo hướng **streaming-friendly** để cập nhật online các đặc trưng hành vi và hỗ trợ cơ chế cảnh báo sớm cho các phiên có rủi ro cao.
+- Theo dõi sự thay đổi của dữ liệu theo thời gian nhằm tăng độ bền vững của mô hình khi hành vi người dùng hoặc quy trình nghiệp vụ thay đổi.
+- Hoàn thiện lớp xử lý **edge-case** để nhận diện tốt hơn các chuỗi bất thường, hiếm gặp hoặc có dấu hiệu nhiễu.
+- Nghiên cứu các cách giảm sự phụ thuộc của mô hình vào một số Action ID nổi trội, từ đó nâng cao khả năng tổng quát hóa.
+- Tối ưu kiến trúc theo hướng nhẹ hơn, cân bằng giữa hiệu năng dự báo và khả năng triển khai thực tế.
