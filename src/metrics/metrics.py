@@ -48,20 +48,27 @@ def evaluate_model(model, loader, device):
     all_preds = np.concatenate(all_preds)
     all_labels = np.concatenate(all_labels)
 
-    # 1. Tính Exact Match Accuracy (Chỉ số chính của cuộc thi)
+    # 1. Tính Overall Exact Match Accuracy
     em_score = exact_match(all_labels, all_preds)
 
-    # 2. Tính F1-Score (Để theo dõi hiệu quả xử lý nhãn lệch)
-    # Chúng ta tính Macro F1 cho từng cột rồi lấy trung bình chung
+    # 2. Tính F1-Score và Accuracy cho từng nhãn (6 heads)
     f1_per_col = []
+    acc_per_col = [] # Thêm list này
+    
     for i in range(6):
+        # Tính F1
         col_f1 = f1_score(all_labels[:, i], all_preds[:, i], average='macro')
         f1_per_col.append(col_f1)
+        
+        # Tính Accuracy cho từng nhãn (Exact Match của riêng nhãn đó)
+        col_acc = np.mean(all_labels[:, i] == all_preds[:, i])
+        acc_per_col.append(col_acc)
     
     avg_f1 = np.mean(f1_per_col)
 
     return {
         "exact_match_accuracy": float(em_score),
         "macro_f1_score": float(avg_f1),
-        "f1_per_attribute": [round(f, 4) for f in f1_per_col] # Chi tiết từng nhãn
+        "f1_per_attribute": [round(f, 4) for f in f1_per_col],
+        "acc_per_attribute": [round(a, 4) for a in acc_per_col] # Thêm dòng này
     }

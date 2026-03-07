@@ -18,14 +18,21 @@ from src.models.transformer_model import TransformerModel
 from src.training.train_transformer import train_full_model
 
 def print_results(results, title):
-    print(f"\n{'='*20} {title} {'='*20}")
+    print(f"\n{'='*25} {title} {'='*25}")
     print(f"Overall Exact Match Accuracy: {results['exact_match_accuracy']:.4f}")
     print(f"Overall Macro F1-Score:       {results['macro_f1_score']:.4f}")
-    print("-" * 50)
-    print("F1-Score per Attribute (6 heads):")
-    for i, f1 in enumerate(results['f1_per_attribute']):
-        print(f"  Attr_{i+1}: {f1:.4f}")
-    print(f"{'='*50}")
+    print("-" * 65)
+    
+    # In bảng so sánh giữa Accuracy và F1 của từng Attr
+    print(f"{'Attribute':<15} | {'Accuracy (EM)':<15} | {'Macro F1':<15}")
+    print("-" * 65)
+    
+    for i in range(len(results['f1_per_attribute'])):
+        acc = results['acc_per_attribute'][i]
+        f1 = results['f1_per_attribute'][i]
+        print(f"Attr_{i+1:<10} | {acc:<15.4f} | {f1:<15.4f}")
+        
+    print(f"{'='*65}")
     
 def transformer():
 
