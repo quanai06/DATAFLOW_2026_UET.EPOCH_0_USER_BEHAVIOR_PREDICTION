@@ -309,6 +309,48 @@ G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
       └── ai_assistance_report.csv                # Báo cáo hỗ trợ AI trong quá trình làm
 ```
 ## 8. Cài đặt và chạy dự án 
+**Yêu cầu hệ thống:**
+
+Python 3.10 trở lên, tối thiểu 8gb RAM 
+
+Các thư viện phụ thuộc trong file requirements.txt
+
+### 1. Clone dự án
+```bash
+git clone https://github.com/quanai06/DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION.git
+cd DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION
+```
+
+### 2. Tạo môi trường ảo (khuyến nghị)
+```bash
+python -m venv .venv
+# Trên Linux/Macos
+source .venv/bin/activate  
+# Trên Windows: 
+source .venv\Scripts\activate
+```
+
+### 3. Cài đặt thư viện
+```bash
+pip install -r requirements.txt
+```
+
+##  Cách sử dụng
+
+### Chạy toàn bộ pipeline 
+Chạy lần lượt các file theo thứ tự sau:
+Chú ý: Nếu huấn luyện lại tất cả model, thời gian xấp xỉ 3-4 tiếng.
+```bash
+
+# scripts train model (local)
+python scripts/pipeline_training.py
+# scripts test (load model)
+python scripts/pipeline_test.py
+# scripts predict submit kaggle
+python scripts/make_v3_submission.py
+# scripts ai
+python scripts/pipeline_ai.py
+```
 ## 9. Giới hạn và hướng phát triển
 ### Hạn chế
 
