@@ -209,8 +209,8 @@ Dạng output compact:
 ```text
 G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
 ```
-## 6.Đánh giá
-## 7.Cấu trúc thư mục
+## 6. Đánh giá
+## 7. Cấu trúc thư mục
 
 
 ### Cấu trúc thư mục
@@ -284,8 +284,8 @@ G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
   └── report/
       └── ai_assistance_report.csv                # Báo cáo hỗ trợ AI trong quá trình làm
 ```
-##8.Cài đặt và chạy dự án 
-##9.Giới hạn và hướng phát triển
+## 8. Cài đặt và chạy dự án 
+## 9. Giới hạn và hướng phát triển
 ### Hạn chế
 
 - Dữ liệu đầu vào chỉ gồm các chuỗi **Action ID ẩn danh**, không mang ngữ nghĩa nghiệp vụ trực tiếp, nên khả năng diễn giải sâu từng hành vi vẫn còn hạn chế.
