@@ -210,6 +210,30 @@ Dạng output compact:
 G=<gid>|TAG=<TAG>|P=<P>|COUNT=<n>|REP=<id>|A=<anchor>|ABA=<k>|Buniq=<m>
 ```
 ## 6. Đánh giá
+
+
+### 1. Accuracy theo từng thuộc tính
+
+| Model            | Attr_1 | Attr_2 | Attr_3 | Attr_4 | Attr_5 | Attr_6 | Overall |
+|------------------|-------:|-------:|-------:|-------:|-------:|-------:|--------:|
+| LSTM             | 0.9922 | 0.9982 | 0.9972 | 0.9982 | 0.9971 | 0.9992 | 0.99139 |
+| LSTM+GRU+CNN     | 0.9875 | 0.9985 | 0.9973 | 0.9849 | 0.9991 | 0.9992 | 0.99389 |
+| Transformer      | **0.9983** | **0.9990** | **0.9979** | **0.9986** | **0.9985** | **0.9981** | **0.9926** |
+
+### 2. F1-score theo từng thuộc tính
+
+| Model            | Attr_1 | Attr_2 | Attr_3 | Attr_4 | Attr_5 | Attr_6 | Macro F1 |
+|------------------|-------:|-------:|-------:|-------:|-------:|-------:|---------:|
+| LSTM             | 0.9768 | 0.9975 | 0.9972 | 0.9719 | 0.9971 | 0.9991 | 0.98994 |
+| LSTM+GRU+CNN     | 0.9875 | 0.9985 | 0.9973 | 0.9849 | 0.9991 | 0.9992 | 0.99444 |
+| Transformer      | **0.9750** | **0.9986** | **0.9978** | **0.9777** | **0.9976** | **0.9980** | **0.9908** |
+
+### 3. Nhận xét
+
+- **Transformer** đạt accuracy cao nhất ở hầu hết các thuộc tính.
+- **LSTM+GRU+CNN** cho kết quả **Macro F1 cao nhất**, cho thấy khả năng cân bằng hiệu quả giữa các nhãn tốt hơn.
+- **LSTM** có kết quả ổn định nhưng nhìn chung thấp hơn hai mô hình còn lại.
+- Nhìn tổng thể, **Transformer** mạnh về độ chính xác theo từng thuộc tính, trong khi **LSTM+GRU+CNN** có lợi thế hơn về hiệu quả phân loại tổng quát theo F1.
 ## 7. Cấu trúc thư mục
 
 
