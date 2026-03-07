@@ -36,6 +36,7 @@ class TransformerModel(nn.Module):
 
         # Step 5: stats branch
         self.use_stats = num_stat_features > 0
+        self.num_stat_features = num_stat_features
         if self.use_stats:
             self.stats_branch = nn.Sequential(
                 nn.Linear(num_stat_features, 64),
@@ -44,8 +45,9 @@ class TransformerModel(nn.Module):
             )
             combined_dim = d_model * 3 + 64
         else:
-            combined_dim = d_model * 3  # mean + max + last token pooling (HEAD version)
+            combined_dim = d_model * 3
 
+        # ===== multi heads =====
         self.heads = nn.ModuleList([
             nn.Linear(combined_dim, n) for n in num_classes_list
         ])
