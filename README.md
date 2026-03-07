@@ -367,3 +367,16 @@ python scripts/pipeline_ai.py
 - Hoàn thiện lớp xử lý **edge-case** để nhận diện tốt hơn các chuỗi bất thường, hiếm gặp hoặc có dấu hiệu nhiễu.
 - Nghiên cứu các cách giảm sự phụ thuộc của mô hình vào một số Action ID nổi trội, từ đó nâng cao khả năng tổng quát hóa.
 - Tối ưu kiến trúc theo hướng nhẹ hơn, cân bằng giữa hiệu năng dự báo và khả năng triển khai thực tế.
+## 👥 8. Tác giả và giấy phép
+
+Dự án này được thực hiện bởi nhóm sinh viên từ trường [UET - VNU](https://uet.vnu.edu.vn) gồm 4 thành viên:
+
+* **Lê Hoàng Quân** - Trưởng Nhóm
+* **Vũ Hoàng Diệu Linh** 
+* **Nguyễn Thị Hiền** 
+* **Dương Trọng Nguyên** 
+
+<div align="center">
+  <p>Được phát triển bởi nhóm UET_EPOCH0</p>
+  <p>Trường Đại học Công nghệ - Đại học Quốc gia Hà Nội</p>
+</div>
